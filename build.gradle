@@ -18,7 +18,112 @@ dependencies {
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 }
 
+def generatedIconRoot = layout.buildDirectory.dir("generated/resources/socialxpfarm-icon")
+
+def generateModIcon = tasks.register("generateModIcon") {
+    def sourceLogo = layout.projectDirectory.file("SXP logo.png")
+    def outputIcon = generatedIconRoot.map { it.file("assets/socialxpfarm/icon.png") }
+
+    inputs.file(sourceLogo)
+    outputs.file(outputIcon)
+
+    doLast {
+        def image = javax.imageio.ImageIO.read(sourceLogo.asFile)
+        if (image == null) {
+            throw new GradleException("Could not read SXP logo.png")
+        }
+
+        int minX = 0
+        int minY = 0
+        int maxX = image.width - 1
+        int maxY = image.height - 1
+
+        if (image.colorModel.hasAlpha()) {
+            int foundMinX = image.width
+            int foundMinY = image.height
+            int foundMaxX = -1
+            int foundMaxY = -1
+
+            for (int y = 0; y < image.height; y++) {
+                for (int x = 0; x < image.width; x++) {
+                    int alpha = (image.getRGB(x, y) >>> 24) & 0xFF
+                    if (alpha > 0) {
+                        foundMinX = Math.min(foundMinX, x)
+                        foundMinY = Math.min(foundMinY, y)
+                        foundMaxX = Math.max(foundMaxX, x)
+                        foundMaxY = Math.max(foundMaxY, y)
+                    }
+                }
+            }
+
+            if (foundMaxX >= foundMinX && foundMaxY >= foundMinY) {
+                minX = foundMinX
+                minY = foundMinY
+                maxX = foundMaxX
+                maxY = foundMaxY
+            }
+        }
+
+        int contentWidth = maxX - minX + 1
+        int contentHeight = maxY - minY + 1
+        int longestSide = Math.max(contentWidth, contentHeight)
+        int margin = Math.max(4, Math.round(longestSide * 0.03f))
+        int squareSize = longestSide + margin * 2
+
+        def square = new java.awt.image.BufferedImage(
+                squareSize,
+                squareSize,
+                java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        def squareGraphics = square.createGraphics()
+        try {
+            int destX = (squareSize - contentWidth) / 2
+            int destY = (squareSize - contentHeight) / 2
+            squareGraphics.drawImage(
+                    image,
+                    destX,
+                    destY,
+                    destX + contentWidth,
+                    destY + contentHeight,
+                    minX,
+                    minY,
+                    maxX + 1,
+                    maxY + 1,
+                    null)
+        } finally {
+            squareGraphics.dispose()
+        }
+
+        int iconSize = 256
+        def icon = new java.awt.image.BufferedImage(
+                iconSize,
+                iconSize,
+                java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        def graphics = icon.createGraphics()
+        try {
+            graphics.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                    java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+            graphics.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING,
+                    java.awt.RenderingHints.VALUE_RENDER_QUALITY)
+            graphics.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                    java.awt.RenderingHints.VALUE_ANTIALIAS_ON)
+            graphics.drawImage(square, 0, 0, iconSize, iconSize, null)
+        } finally {
+            graphics.dispose()
+        }
+
+        def outputFile = outputIcon.get().asFile
+        outputFile.parentFile.mkdirs()
+        javax.imageio.ImageIO.write(icon, "png", outputFile)
+
+        logger.lifecycle("Generated 256x256 mod icon from ${image.width}x${image.height} source logo")
+    }
+}
+
+sourceSets.main.resources.srcDir(generatedIconRoot)
+
 processResources {
+    dependsOn generateModIcon
+
     inputs.property "version", project.version
     inputs.property "minecraft_version", project.minecraft_version
     inputs.property "loader_version", project.loader_version
