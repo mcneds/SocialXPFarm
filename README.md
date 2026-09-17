@@ -1,6 +1,6 @@
 # SocialXPFarm
 
-Small client-side Fabric 1.21.2 mod that keeps a Hypixel SkyBlock alt guesting on a configured player's island.
+Small client-side Fabric **26.2** mod that keeps a Hypixel SkyBlock alt guesting on a configured player's island.
 
 ## Behavior
 
@@ -43,12 +43,12 @@ All timing values are in client ticks; 20 ticks is approximately one second.
 
 ## Build
 
-Requires Java 21.
+Targets Minecraft **26.2** / Fabric and requires Java 25.
 
 ```bash
 gradle build
 ```
 
-The remapped mod jar is written to `build/libs/`.
+The mod jar is written to `build/libs/`.
 
 GitHub Actions builds pushes and pull requests. Pushes to `main` also replace the `latest-build` release with `SocialXPFarm-latest.jar`.
