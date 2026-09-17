@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -52,4 +52,4 @@ jobs:
             build/libs/SocialXPFarm-latest.jar \
             --target "$GITHUB_SHA" \
             --title "Latest Build" \
-            --notes "Minecraft 1.21.2 / Fabric"
+            --notes "Minecraft 26.2 / Fabric"
