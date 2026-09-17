@@ -7,10 +7,14 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.scores.DisplaySlot;
 import net.minecraft.world.scores.Objective;
 import org.slf4j.Logger;
@@ -29,12 +33,16 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path CONFIG_PATH = FabricLoader.getInstance().getConfigDir().resolve("socialxpfarm.json");
 
+    // Standard container menus append the player's 27 inventory + 9 hotbar slots after the GUI slots.
+    private static final int PLAYER_INVENTORY_SLOT_COUNT = 36;
+
     private Config config;
     private State state = State.MONITORING;
     private int timer;
     private int nonGuestTicks;
     private int menuSeenTicks;
     private boolean warnedUnconfigured;
+    private boolean loggedVisitCandidates;
 
     @Override
     public void onInitializeClient() {
@@ -65,6 +73,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             timer = 0;
             nonGuestTicks = 0;
             menuSeenTicks = 0;
+            loggedVisitCandidates = false;
             return;
         }
 
@@ -131,6 +140,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         state = State.WAITING_FOR_MENU;
         timer = config.visitMenuTimeoutTicks;
         menuSeenTicks = 0;
+        loggedVisitCandidates = false;
     }
 
     private boolean tryClickConfiguredProfile(Minecraft client) {
@@ -152,22 +162,109 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         }
 
         AbstractContainerMenu menu = handled.getMenu();
-        String wantedProfile = config.profileName.toLowerCase(Locale.ROOT);
+        String wantedProfile = config.profileName.trim().toLowerCase(Locale.ROOT);
 
-        for (Slot slot : menu.slots) {
+        // Hypixel's visit GUI is a normal container. Player inventory slots are appended at the end,
+        // so only inspect the GUI-owned slots and never click a head from the player's inventory.
+        int guiSlotCount = menu.slots.size() > PLAYER_INVENTORY_SLOT_COUNT
+                ? menu.slots.size() - PLAYER_INVENTORY_SLOT_COUNT
+                : menu.slots.size();
+
+        Slot onlyVisitHead = null;
+        int visitHeadCount = 0;
+        StringBuilder candidates = new StringBuilder();
+
+        for (int i = 0; i < guiSlotCount; i++) {
+            Slot slot = menu.slots.get(i);
             ItemStack stack = slot.getItem();
-            if (stack.isEmpty()) {
+            if (stack.isEmpty() || !stack.is(Items.PLAYER_HEAD)) {
                 continue;
             }
 
-            String itemName = stack.getHoverName().getString().trim().toLowerCase(Locale.ROOT);
-            if (itemName.equals(wantedProfile) || itemName.contains(wantedProfile)) {
-                LOGGER.info("Clicking SkyBlock profile '{}' in visit menu (slot {}).", config.profileName, slot.index);
-                client.gameMode.handleContainerInput(menu.containerId, slot.index, 0, ContainerInput.PICKUP, client.player);
-                return true;
+            String itemName = stack.getHoverName().getString().trim();
+            boolean isVisitHead = itemName.toLowerCase(Locale.ROOT).contains("visit player island")
+                    || loreContains(stack, "click to visit");
+            if (!isVisitHead) {
+                continue;
+            }
+
+            visitHeadCount++;
+            onlyVisitHead = slot;
+
+            String profile = readProfileFromLore(stack);
+            if (candidates.length() > 0) candidates.append(", ");
+            candidates.append("slot ").append(slot.index).append("=")
+                    .append(profile == null ? "<unknown profile>" : profile);
+
+            if (profile != null && profile.equalsIgnoreCase(config.profileName.trim())) {
+                return clickVisitHead(client, menu, slot, profile, false);
+            }
+
+            // Also accept the configured profile text anywhere in lore in case Hypixel changes
+            // the exact "Profile: ..." formatting but preserves the visible profile name.
+            if (loreContains(stack, wantedProfile)) {
+                return clickVisitHead(client, menu, slot, config.profileName, false);
             }
         }
 
+        // If Hypixel only offers one visitable profile, selecting the sole valid visit head is safe
+        // even if the lore format changes. Never use this fallback when multiple visit heads exist.
+        if (visitHeadCount == 1 && onlyVisitHead != null) {
+            return clickVisitHead(client, menu, onlyVisitHead, config.profileName, true);
+        }
+
+        if (!loggedVisitCandidates) {
+            loggedVisitCandidates = true;
+            if (visitHeadCount == 0) {
+                LOGGER.warn("Visit menu detected, but no visit player-head items were found in its {} GUI slots.", guiSlotCount);
+            } else {
+                LOGGER.warn("Visit menu detected, but configured profile '{}' did not match candidates: {}",
+                        config.profileName, candidates);
+            }
+        }
+
+        return false;
+    }
+
+    private boolean clickVisitHead(Minecraft client, AbstractContainerMenu menu, Slot slot, String profile, boolean fallback) {
+        if (fallback) {
+            LOGGER.info("Clicking the only visitable player head (slot {}) as fallback for profile '{}'.", slot.index, profile);
+        } else {
+            LOGGER.info("Clicking SkyBlock profile '{}' in visit menu (slot {}).", profile, slot.index);
+        }
+        client.gameMode.handleContainerInput(menu.containerId, slot.index, 0, ContainerInput.PICKUP, client.player);
+        return true;
+    }
+
+    private static String readProfileFromLore(ItemStack stack) {
+        ItemLore lore = stack.get(DataComponents.LORE);
+        if (lore == null) {
+            return null;
+        }
+
+        for (Component line : lore.lines()) {
+            String text = line.getString().trim();
+            String lower = text.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("profile:")) {
+                String profile = text.substring(text.indexOf(':') + 1).trim();
+                return profile.isEmpty() ? null : profile;
+            }
+        }
+        return null;
+    }
+
+    private static boolean loreContains(ItemStack stack, String wantedText) {
+        ItemLore lore = stack.get(DataComponents.LORE);
+        if (lore == null || wantedText == null || wantedText.isBlank()) {
+            return false;
+        }
+
+        String wanted = wantedText.toLowerCase(Locale.ROOT);
+        for (Component line : lore.lines()) {
+            if (line.getString().toLowerCase(Locale.ROOT).contains(wanted)) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -177,6 +274,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         state = State.RETRY_DELAY;
         timer = config.retryDelayTicks;
         menuSeenTicks = 0;
+        loggedVisitCandidates = false;
     }
 
     private static void closeHandledScreen(Minecraft client) {
@@ -219,6 +317,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         timer = 0;
         nonGuestTicks = 0;
         menuSeenTicks = 0;
+        loggedVisitCandidates = false;
     }
 
     private static Config loadConfig() {
