@@ -136,10 +136,6 @@ processResources {
     }
 }
 
-tasks.named("sourcesJar") {
-    dependsOn generateModIcon
-}
-
 def targetJavaVersion = 25
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
@@ -152,4 +148,8 @@ java {
         toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     }
     withSourcesJar()
+}
+
+tasks.named("sourcesJar") {
+    dependsOn generateModIcon
 }
