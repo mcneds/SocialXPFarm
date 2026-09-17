@@ -8,7 +8,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.scores.DisplaySlot;
@@ -134,7 +134,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     }
 
     private boolean tryClickConfiguredProfile(Minecraft client) {
-        if (!(client.screen instanceof AbstractContainerScreen<?> handled) || client.gameMode == null || client.player == null) {
+        if (!(client.gui.screen() instanceof AbstractContainerScreen<?> handled) || client.gameMode == null || client.player == null) {
             menuSeenTicks = 0;
             return false;
         }
@@ -163,7 +163,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             String itemName = stack.getHoverName().getString().trim().toLowerCase(Locale.ROOT);
             if (itemName.equals(wantedProfile) || itemName.contains(wantedProfile)) {
                 LOGGER.info("Clicking SkyBlock profile '{}' in visit menu (slot {}).", config.profileName, slot.index);
-                client.gameMode.handleInventoryMouseClick(menu.containerId, slot.index, 0, ClickType.PICKUP, client.player);
+                client.gameMode.handleContainerInput(menu.containerId, slot.index, 0, ContainerInput.PICKUP, client.player);
                 return true;
             }
         }
@@ -180,7 +180,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     }
 
     private static void closeHandledScreen(Minecraft client) {
-        if (client.player != null && client.screen instanceof AbstractContainerScreen<?>) {
+        if (client.player != null && client.gui.screen() instanceof AbstractContainerScreen<?>) {
             client.player.closeContainer();
         }
     }
