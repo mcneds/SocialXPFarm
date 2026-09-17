@@ -5,14 +5,14 @@ import com.google.gson.GsonBuilder;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.item.ItemStack;
-import net.minecraft.scoreboard.ScoreboardDisplaySlot;
-import net.minecraft.scoreboard.ScoreboardObjective;
-import net.minecraft.screen.ScreenHandler;
-import net.minecraft.screen.slot.Slot;
-import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.scores.DisplaySlot;
+import net.minecraft.world.scores.Objective;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +43,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         LOGGER.info("SocialXPFarm loaded. Config: {}", CONFIG_PATH.toAbsolutePath());
     }
 
-    private void tick(MinecraftClient client) {
+    private void tick(Minecraft client) {
         if (config == null || !config.enabled || !config.isConfigured()) {
             if (!warnedUnconfigured && client.player != null) {
                 warnedUnconfigured = true;
@@ -52,7 +52,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             return;
         }
 
-        if (!isOnHypixel(client) || client.player == null || client.getNetworkHandler() == null) {
+        if (!isOnHypixel(client) || client.player == null || client.getConnection() == null) {
             resetState();
             return;
         }
@@ -103,7 +103,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         }
     }
 
-    private void recover(MinecraftClient client) {
+    private void recover(Minecraft client) {
         nonGuestTicks = 0;
         if (isInSkyBlock(client)) {
             sendVisit(client);
@@ -112,25 +112,29 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         }
     }
 
-    private void sendPlaySkyBlock(MinecraftClient client) {
+    private void sendPlaySkyBlock(Minecraft client) {
         closeHandledScreen(client);
         LOGGER.info("Not in SkyBlock; sending /play sb before retrying visit.");
-        client.getNetworkHandler().sendChatCommand("play sb");
+        if (client.getConnection() != null) {
+            client.getConnection().sendCommand("play sb");
+        }
         state = State.WAITING_FOR_SKYBLOCK;
         timer = config.skyBlockJoinTimeoutTicks;
     }
 
-    private void sendVisit(MinecraftClient client) {
+    private void sendVisit(Minecraft client) {
         closeHandledScreen(client);
         LOGGER.info("Sending /visit {}", config.targetPlayer);
-        client.getNetworkHandler().sendChatCommand("visit " + config.targetPlayer);
+        if (client.getConnection() != null) {
+            client.getConnection().sendCommand("visit " + config.targetPlayer);
+        }
         state = State.WAITING_FOR_MENU;
         timer = config.visitMenuTimeoutTicks;
         menuSeenTicks = 0;
     }
 
-    private boolean tryClickConfiguredProfile(MinecraftClient client) {
-        if (!(client.currentScreen instanceof HandledScreen<?> handled) || client.interactionManager == null || client.player == null) {
+    private boolean tryClickConfiguredProfile(Minecraft client) {
+        if (!(client.screen instanceof AbstractContainerScreen<?> handled) || client.gameMode == null || client.player == null) {
             menuSeenTicks = 0;
             return false;
         }
@@ -147,19 +151,19 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             return false;
         }
 
-        ScreenHandler handler = handled.getScreenHandler();
+        AbstractContainerMenu menu = handled.getMenu();
         String wantedProfile = config.profileName.toLowerCase(Locale.ROOT);
 
-        for (Slot slot : handler.slots) {
-            ItemStack stack = slot.getStack();
+        for (Slot slot : menu.slots) {
+            ItemStack stack = slot.getItem();
             if (stack.isEmpty()) {
                 continue;
             }
 
-            String itemName = stack.getName().getString().trim().toLowerCase(Locale.ROOT);
+            String itemName = stack.getHoverName().getString().trim().toLowerCase(Locale.ROOT);
             if (itemName.equals(wantedProfile) || itemName.contains(wantedProfile)) {
-                LOGGER.info("Clicking SkyBlock profile '{}' in visit menu (slot {}).", config.profileName, slot.id);
-                client.interactionManager.clickSlot(handler.syncId, slot.id, 0, SlotActionType.PICKUP, client.player);
+                LOGGER.info("Clicking SkyBlock profile '{}' in visit menu (slot {}).", config.profileName, slot.index);
+                client.gameMode.handleInventoryMouseClick(menu.containerId, slot.index, 0, ClickType.PICKUP, client.player);
                 return true;
             }
         }
@@ -167,7 +171,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         return false;
     }
 
-    private void scheduleRetry(MinecraftClient client, String reason) {
+    private void scheduleRetry(Minecraft client, String reason) {
         LOGGER.warn("Recovery attempt failed: {}. Retrying shortly.", reason);
         closeHandledScreen(client);
         state = State.RETRY_DELAY;
@@ -175,35 +179,35 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         menuSeenTicks = 0;
     }
 
-    private static void closeHandledScreen(MinecraftClient client) {
-        if (client.player != null && client.currentScreen instanceof HandledScreen<?>) {
-            client.player.closeHandledScreen();
+    private static void closeHandledScreen(Minecraft client) {
+        if (client.player != null && client.screen instanceof AbstractContainerScreen<?>) {
+            client.player.closeContainer();
         }
     }
 
-    private static boolean isOnHypixel(MinecraftClient client) {
-        if (client.getCurrentServerEntry() == null || client.getCurrentServerEntry().address == null) {
+    private static boolean isOnHypixel(Minecraft client) {
+        if (client.getCurrentServer() == null || client.getCurrentServer().ip == null) {
             return false;
         }
-        String address = client.getCurrentServerEntry().address.toLowerCase(Locale.ROOT);
-        return address.equals("hypixel.net") || address.endsWith(".hypixel.net") || address.contains("hypixel.net:");
+        String address = client.getCurrentServer().ip.toLowerCase(Locale.ROOT).split(":", 2)[0];
+        return address.equals("hypixel.net") || address.endsWith(".hypixel.net");
     }
 
-    private static boolean isInSkyBlock(MinecraftClient client) {
+    private static boolean isInSkyBlock(Minecraft client) {
         String title = sidebarTitle(client);
         return title.contains("SKYBLOCK");
     }
 
-    private static boolean isGuesting(MinecraftClient client) {
+    private static boolean isGuesting(Minecraft client) {
         String title = sidebarTitle(client);
         return title.contains("SKYBLOCK") && title.contains("GUEST");
     }
 
-    private static String sidebarTitle(MinecraftClient client) {
-        if (client.world == null) {
+    private static String sidebarTitle(Minecraft client) {
+        if (client.level == null) {
             return "";
         }
-        ScoreboardObjective objective = client.world.getScoreboard().getObjectiveForSlot(ScoreboardDisplaySlot.SIDEBAR);
+        Objective objective = client.level.getScoreboard().getDisplayObjective(DisplaySlot.SIDEBAR);
         if (objective == null) {
             return "";
         }
