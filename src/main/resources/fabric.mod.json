@@ -11,6 +11,7 @@
     "sources": "https://github.com/mcneds/SocialXPFarm"
   },
   "license": "All-Rights-Reserved",
+  "icon": "assets/socialxpfarm/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": [
