@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "socialxpfarm",
+  "version": "${version}",
+  "name": "SocialXPFarm",
+  "description": "Automatically rejoins a configured Hypixel SkyBlock guest island after being kicked or transferred away.",
+  "authors": [
+    "mcneds"
+  ],
+  "contact": {
+    "sources": "https://github.com/mcneds/SocialXPFarm"
+  },
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.mcneds.socialxpfarm.SocialXPFarmClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.9",
+    "minecraft": "~1.21.2",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
