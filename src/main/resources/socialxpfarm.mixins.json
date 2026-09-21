@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.mcneds.socialxpfarm.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["DisconnectedScreenAccessor", "ConnectScreenMixin", "QueueTitleMixin"],
+  "injectors": {"defaultRequire": 1}
+}

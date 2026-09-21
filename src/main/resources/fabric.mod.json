@@ -13,6 +13,10 @@
   "license": "All-Rights-Reserved",
   "icon": "assets/socialxpfarm/icon.png",
   "environment": "client",
+  "mixins": ["socialxpfarm.mixins.json"],
+  "suggests": {
+    "authme": "*"
+  },
   "entrypoints": {
     "client": [
       "dev.mcneds.socialxpfarm.SocialXPFarmClient"

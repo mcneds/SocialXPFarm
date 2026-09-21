@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -43,20 +44,35 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     private int menuSeenTicks;
     private boolean warnedUnconfigured;
     private boolean loggedVisitCandidates;
+    private final ConnectionRecovery connectionRecovery = ConnectionRecovery.INSTANCE;
+    private final RecoveryDeadline limboRecovery = new RecoveryDeadline();
+    private int recoveryFailures;
+    private int healthyTicks;
 
     @Override
     public void onInitializeClient() {
         config = loadConfig();
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
+        ClientReceiveMessageEvents.GAME.register((message, overlay) -> ServerSignals.INSTANCE.accept(message.getString()));
         LOGGER.info("SocialXPFarm loaded. Config: {}", CONFIG_PATH.toAbsolutePath());
     }
 
     private void tick(Minecraft client) {
         if (config == null || !config.enabled || !config.isConfigured()) {
+            connectionRecovery.reset();
             if (!warnedUnconfigured && client.player != null) {
                 warnedUnconfigured = true;
                 LOGGER.warn("SocialXPFarm is idle until targetPlayer and profileName are set in {}", CONFIG_PATH.toAbsolutePath());
             }
+            return;
+        }
+
+        connectionRecovery.tick(client, config.autoReconnect, config.reconnectDelayTicks,
+                config.maxReconnectDelayTicks, config.connectTimeoutTicks);
+
+        if (ConnectionRecovery.isLoading(client.gui.screen())) {
+            resetState();
+            connectionRecovery.markUnhealthy();
             return;
         }
 
@@ -66,6 +82,10 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         }
 
         if (isGuesting(client)) {
+            ServerSignals.INSTANCE.clearQueue();
+            limboRecovery.clear();
+            if (healthyTicks < 600 && ++healthyTicks == 600) recoveryFailures = 0;
+            connectionRecovery.markHealthy();
             if (state != State.MONITORING) {
                 LOGGER.info("Guesting restored; recovery complete.");
             }
@@ -74,6 +94,25 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             nonGuestTicks = 0;
             menuSeenTicks = 0;
             loggedVisitCandidates = false;
+            return;
+        }
+
+        healthyTicks = 0;
+        connectionRecovery.markUnhealthy();
+        if (isInSkyBlock(client)) ServerSignals.INSTANCE.clearQueue();
+        if (ServerSignals.INSTANCE.queued() || sidebarTitle(client).contains("QUEUE") || ServerSignals.INSTANCE.throttled()) {
+            limboRecovery.clear();
+            return;
+        }
+        boolean possibleLimbo = sidebarTitle(client).isBlank() || sidebarTitle(client).contains("LIMBO");
+        if (!possibleLimbo) {
+            limboRecovery.clear();
+        } else if (config.autoReconnect && !limboRecovery.active() && !limboRecovery.expired()) {
+            limboRecovery.startTicks(config.limboReconnectTicks);
+        }
+        if (possibleLimbo && limboRecovery.expired() && config.autoReconnect) {
+            connectionRecovery.forceReconnect(client, "Limbo recovery commands did not restore a lobby");
+            resetState();
             return;
         }
 
@@ -88,6 +127,16 @@ public final class SocialXPFarmClient implements ClientModInitializer {
                 if (isInSkyBlock(client)) {
                     sendVisit(client);
                 } else if (--timer <= 0) {
+                    scheduleRetry(client, "SkyBlock join did not complete");
+                }
+            }
+            case WAITING_FOR_LOBBY -> {
+                if (isInSkyBlock(client)) {
+                    sendVisit(client);
+                } else if (!sidebarTitle(client).isBlank() && !sidebarTitle(client).contains("LIMBO")) {
+                    sendPlaySkyBlock(client);
+                } else if (--timer <= 0) {
+                    // Try SkyBlock even if the lobby did not publish a sidebar.
                     sendPlaySkyBlock(client);
                 }
             }
@@ -116,6 +165,12 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         nonGuestTicks = 0;
         if (isInSkyBlock(client)) {
             sendVisit(client);
+        } else if (sidebarTitle(client).isBlank() || sidebarTitle(client).contains("LIMBO")) {
+            closeHandledScreen(client);
+            LOGGER.info("Possible limbo; sending /lobby before joining SkyBlock.");
+            client.getConnection().sendCommand("lobby");
+            state = State.WAITING_FOR_LOBBY;
+            timer = config.lobbyJoinTimeoutTicks;
         } else {
             sendPlaySkyBlock(client);
         }
@@ -272,7 +327,8 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         LOGGER.warn("Recovery attempt failed: {}. Retrying shortly.", reason);
         closeHandledScreen(client);
         state = State.RETRY_DELAY;
-        timer = config.retryDelayTicks;
+        timer = RecoveryPolicy.reconnectDelay(config.retryDelayTicks, config.maxRetryDelayTicks, recoveryFailures);
+        recoveryFailures = Math.min(31, recoveryFailures + 1);
         menuSeenTicks = 0;
         loggedVisitCandidates = false;
     }
@@ -284,11 +340,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     }
 
     private static boolean isOnHypixel(Minecraft client) {
-        if (client.getCurrentServer() == null || client.getCurrentServer().ip == null) {
-            return false;
-        }
-        String address = client.getCurrentServer().ip.toLowerCase(Locale.ROOT).split(":", 2)[0];
-        return address.equals("hypixel.net") || address.endsWith(".hypixel.net");
+        return client.getCurrentServer() != null && RecoveryPolicy.isHypixel(client.getCurrentServer().ip);
     }
 
     private static boolean isInSkyBlock(Minecraft client) {
@@ -318,6 +370,8 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         nonGuestTicks = 0;
         menuSeenTicks = 0;
         loggedVisitCandidates = false;
+        limboRecovery.clear();
+        healthyTicks = 0;
     }
 
     private static Config loadConfig() {
@@ -351,6 +405,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
 
     private enum State {
         MONITORING,
+        WAITING_FOR_LOBBY,
         WAITING_FOR_SKYBLOCK,
         WAITING_FOR_MENU,
         WAITING_FOR_TRANSFER,
@@ -368,6 +423,13 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         int transferTimeoutTicks = 200;
         int skyBlockJoinTimeoutTicks = 240;
         int retryDelayTicks = 100;
+        int lobbyJoinTimeoutTicks = 100;
+        boolean autoReconnect = true;
+        int reconnectDelayTicks = 200;
+        int maxReconnectDelayTicks = 1200;
+        int connectTimeoutTicks = 2400;
+        int limboReconnectTicks = 2400;
+        int maxRetryDelayTicks = 1200;
 
         void normalize() {
             if (targetPlayer == null) targetPlayer = "";
@@ -378,6 +440,12 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             transferTimeoutTicks = Math.max(40, transferTimeoutTicks);
             skyBlockJoinTimeoutTicks = Math.max(80, skyBlockJoinTimeoutTicks);
             retryDelayTicks = Math.max(20, retryDelayTicks);
+            lobbyJoinTimeoutTicks = Math.max(40, lobbyJoinTimeoutTicks);
+            reconnectDelayTicks = Math.max(100, reconnectDelayTicks);
+            maxReconnectDelayTicks = Math.max(reconnectDelayTicks, maxReconnectDelayTicks);
+            connectTimeoutTicks = Math.max(600, connectTimeoutTicks);
+            limboReconnectTicks = Math.max(600, limboReconnectTicks);
+            maxRetryDelayTicks = Math.max(retryDelayTicks, maxRetryDelayTicks);
         }
 
         boolean isConfigured() {
