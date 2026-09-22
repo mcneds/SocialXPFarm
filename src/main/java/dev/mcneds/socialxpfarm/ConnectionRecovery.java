@@ -48,7 +48,7 @@ public final class ConnectionRecovery {
 
     void tick(Minecraft client, boolean enabled, int initialDelay, int maximumDelay, int connectTimeoutTicks) {
         if (!enabled) {
-            reset();
+            reset(false); // In-server recovery can still need queue/throttle signals when reconnecting is disabled.
             return;
         }
         Screen screen = client.gui.screen();
@@ -180,6 +180,10 @@ public final class ConnectionRecovery {
     }
 
     void reset() {
+        reset(true);
+    }
+
+    void reset(boolean clearSignals) {
         server = null;
         failureScreen = null;
         staleUser = null;
@@ -190,6 +194,6 @@ public final class ConnectionRecovery {
         paused = false;
         protocolFailures = 0;
         healthyTicks = 0;
-        ServerSignals.INSTANCE.reset();
+        if (clearSignals) ServerSignals.INSTANCE.reset();
     }
 }

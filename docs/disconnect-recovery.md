@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-22 for Minecraft 26.2, Fabric, and Auth Me 9.3.0+26.2.
 
-The objective is time spent guesting on the intended island. Being connected to Hypixel, sitting in a queue, or repeatedly reconnecting does not establish that objective. Automatic recovery can reduce downtime from transient failures; it cannot guarantee uninterrupted availability.
+The objective is time spent at the selected destination: guesting on the intended island, or on your own island in `OWN` mode. F8 or `/sxp off` disables all automation; `/sxp mode own|guest` changes the destination independently. Both settings persist. Own-island recovery uses `/is` and a non-guest sidebar location of `Your Island`. Being connected to Hypixel, sitting in a queue, or repeatedly reconnecting does not establish that objective. Automatic recovery can reduce downtime from transient failures; it cannot guarantee uninterrupted availability.
 
 This is a failure-family inventory, not a claim that every possible server message has been discovered. Hypixel can supply arbitrary disconnect text, change its proxy behavior, or introduce new restrictions. The accompanying [vanilla reason-key inventory](minecraft-26.2-disconnect-keys.txt) was extracted from the exact Minecraft dependency used by this build. Unknown disconnect reasons retain bounded-frequency retries and are logged for diagnosis.
 
@@ -62,7 +62,7 @@ This is a failure-family inventory, not a claim that every possible server messa
 4. Classify disconnect components recursively, including nested translation arguments and siblings. Precedence is manual restriction → authentication → bounded protocol repair → cooldown → ordinary retry.
 5. Ordinary reconnect delays are 10, 20, 40, then 60 seconds before jitter. Add less than 20% jitter without exceeding the cap. Capacity/throttle/stale-connection cases impose a 60-second floor even if a user configures a lower normal cap.
 6. Connection and limbo watchdogs, reconnect delays, and signal leases use `System.nanoTime`. They advance even when menu rendering/client tick delivery is slow, and do not use the adjustable wall clock. Checks still require the client thread to run.
-7. Backoff and protocol-failure history reset only after 600 consecutive guest ticks, approximately thirty seconds. A brief successful login or guest-state flicker does not reset them.
+7. Backoff and protocol-failure history reset only after 600 consecutive ticks at the selected destination, approximately thirty seconds. A brief successful login or guest-state flicker does not reset them.
 8. Log the disconnect reason and selected policy once for each failure screen. Preserve vanilla's protocol report facilities. Repeated protocol failures pause after three automatic retries; transient outage retries remain unlimited in count but capped in frequency. [Hypixel disconnect-report instructions](https://support.hypixel.net/hc/en-us/articles/20335547218322-Reporting-Server-Disconnect-Logs-to-Hypixel).
 
 ## What still limits unattended uptime

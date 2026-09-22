@@ -3,7 +3,7 @@
   "id": "socialxpfarm",
   "version": "${version}",
   "name": "SocialXPFarm",
-  "description": "Automatically rejoins a configured Hypixel SkyBlock guest island after being kicked or transferred away.",
+  "description": "Toggle Hypixel SkyBlock recovery to your own island or a configured guest island after kicks and transfers.",
   "authors": [
     "mcneds"
   ],

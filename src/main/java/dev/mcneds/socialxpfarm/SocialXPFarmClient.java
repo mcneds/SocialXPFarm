@@ -2,11 +2,16 @@ package dev.mcneds.socialxpfarm;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -18,6 +23,9 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.ItemLore;
 import net.minecraft.world.scores.DisplaySlot;
 import net.minecraft.world.scores.Objective;
+import net.minecraft.world.scores.PlayerTeam;
+import net.minecraft.resources.Identifier;
+import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +35,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.List;
+
+import static net.fabricmc.fabric.api.client.command.v2.ClientCommands.literal;
 
 public final class SocialXPFarmClient implements ClientModInitializer {
     public static final String MOD_ID = "socialxpfarm";
@@ -48,26 +59,43 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     private final RecoveryDeadline limboRecovery = new RecoveryDeadline();
     private int recoveryFailures;
     private int healthyTicks;
+    private KeyMapping toggleKey;
 
     @Override
     public void onInitializeClient() {
         config = loadConfig();
+        toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.socialxpfarm.toggle",
+                InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F8,
+                KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "controls"))));
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> dispatcher.register(
+                literal("sxp").requires(FabricClientCommandSource::attended)
+                        .executes(command -> showStatus(command.getSource().getClient()))
+                        .then(literal("toggle").executes(command -> setEnabled(command.getSource().getClient(), !config.enabled)))
+                        .then(literal("on").executes(command -> setEnabled(command.getSource().getClient(), true)))
+                        .then(literal("off").executes(command -> setEnabled(command.getSource().getClient(), false)))
+                        .then(literal("mode")
+                                .then(literal("own").executes(command -> setDestination(command.getSource().getClient(), IslandDestination.OWN)))
+                                .then(literal("guest").executes(command -> setDestination(command.getSource().getClient(), IslandDestination.GUEST))))));
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> ServerSignals.INSTANCE.accept(message.getString()));
-        LOGGER.info("SocialXPFarm loaded. Config: {}", CONFIG_PATH.toAbsolutePath());
+        LOGGER.info("SocialXPFarm {} loaded (enabled={}, destination={}). Config: {}",
+                FabricLoader.getInstance().getModContainer(MOD_ID).orElseThrow().getMetadata().getVersion().getFriendlyString(),
+                config.enabled, config.destination, CONFIG_PATH.toAbsolutePath());
     }
 
     private void tick(Minecraft client) {
-        if (config == null || !config.enabled || !config.isConfigured()) {
-            connectionRecovery.reset();
-            if (!warnedUnconfigured && client.player != null) {
+        while (toggleKey.consumeClick()) setEnabled(client, !config.enabled);
+        if (config == null || !config.shouldRun()) {
+            connectionRecovery.reset(false);
+            resetState();
+            if (config != null && config.enabled && !warnedUnconfigured && client.player != null) {
                 warnedUnconfigured = true;
                 LOGGER.warn("SocialXPFarm is idle until targetPlayer and profileName are set in {}", CONFIG_PATH.toAbsolutePath());
             }
             return;
         }
 
-        connectionRecovery.tick(client, config.autoReconnect, config.reconnectDelayTicks,
+        connectionRecovery.tick(client, config.enabled && config.autoReconnect, config.reconnectDelayTicks,
                 config.maxReconnectDelayTicks, config.connectTimeoutTicks);
 
         if (ConnectionRecovery.isLoading(client.gui.screen())) {
@@ -81,13 +109,13 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             return;
         }
 
-        if (isGuesting(client)) {
+        if (destination().reached(sidebarTitle(client), sidebarLines(client))) {
             ServerSignals.INSTANCE.clearQueue();
             limboRecovery.clear();
             if (healthyTicks < 600 && ++healthyTicks == 600) recoveryFailures = 0;
             connectionRecovery.markHealthy();
             if (state != State.MONITORING) {
-                LOGGER.info("Guesting restored; recovery complete.");
+                LOGGER.info("Destination restored ({}); recovery complete.", destination().label);
             }
             state = State.MONITORING;
             timer = 0;
@@ -107,10 +135,10 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         boolean possibleLimbo = sidebarTitle(client).isBlank() || sidebarTitle(client).contains("LIMBO");
         if (!possibleLimbo) {
             limboRecovery.clear();
-        } else if (config.autoReconnect && !limboRecovery.active() && !limboRecovery.expired()) {
+        } else if (config.enabled && config.autoReconnect && !limboRecovery.active() && !limboRecovery.expired()) {
             limboRecovery.startTicks(config.limboReconnectTicks);
         }
-        if (possibleLimbo && limboRecovery.expired() && config.autoReconnect) {
+        if (possibleLimbo && limboRecovery.expired() && config.enabled && config.autoReconnect) {
             connectionRecovery.forceReconnect(client, "Limbo recovery commands did not restore a lobby");
             resetState();
             return;
@@ -125,14 +153,14 @@ public final class SocialXPFarmClient implements ClientModInitializer {
             }
             case WAITING_FOR_SKYBLOCK -> {
                 if (isInSkyBlock(client)) {
-                    sendVisit(client);
+                    sendDestination(client);
                 } else if (--timer <= 0) {
                     scheduleRetry(client, "SkyBlock join did not complete");
                 }
             }
             case WAITING_FOR_LOBBY -> {
                 if (isInSkyBlock(client)) {
-                    sendVisit(client);
+                    sendDestination(client);
                 } else if (!sidebarTitle(client).isBlank() && !sidebarTitle(client).contains("LIMBO")) {
                     sendPlaySkyBlock(client);
                 } else if (--timer <= 0) {
@@ -164,7 +192,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     private void recover(Minecraft client) {
         nonGuestTicks = 0;
         if (isInSkyBlock(client)) {
-            sendVisit(client);
+            sendDestination(client);
         } else if (sidebarTitle(client).isBlank() || sidebarTitle(client).contains("LIMBO")) {
             closeHandledScreen(client);
             LOGGER.info("Possible limbo; sending /lobby before joining SkyBlock.");
@@ -178,7 +206,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
 
     private void sendPlaySkyBlock(Minecraft client) {
         closeHandledScreen(client);
-        LOGGER.info("Not in SkyBlock; sending /play sb before retrying visit.");
+        LOGGER.info("Not in SkyBlock; sending /play sb before returning to {}.", destination().label);
         if (client.getConnection() != null) {
             client.getConnection().sendCommand("play sb");
         }
@@ -196,6 +224,69 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         timer = config.visitMenuTimeoutTicks;
         menuSeenTicks = 0;
         loggedVisitCandidates = false;
+    }
+
+    private IslandDestination destination() {
+        return config.destination;
+    }
+
+    private void sendDestination(Minecraft client) {
+        if (destination() == IslandDestination.GUEST) {
+            sendVisit(client);
+            return;
+        }
+        closeHandledScreen(client);
+        LOGGER.info("Sending /is to return to own island.");
+        client.getConnection().sendCommand("is");
+        state = State.WAITING_FOR_TRANSFER;
+        timer = config.transferTimeoutTicks;
+    }
+
+    private int showStatus(Minecraft client) {
+        feedback(client, "Farming " + (config.enabled ? "ON" : "OFF") + "; destination: " + config.destination.label
+                + ". /sxp toggle | on | off | mode own | mode guest");
+        return 1;
+    }
+
+    private int setEnabled(Minecraft client, boolean enabled) {
+        if (enabled && !config.isConfigured()) {
+            feedback(client, "Set targetPlayer and profileName for guest mode, or use /sxp mode own first.");
+            return 0;
+        }
+        config.enabled = enabled;
+        controlsChanged(client);
+        feedback(client, enabled ? "Automation ON; destination: " + config.destination.label + "."
+                : "Automation OFF. All recovery actions and reconnects are disabled.");
+        return 1;
+    }
+
+    private int setDestination(Minecraft client, IslandDestination destination) {
+        if (!destination.isConfigured(config.targetPlayer, config.profileName)) {
+            feedback(client, "Guest mode needs targetPlayer and profileName in the config.");
+            return 0;
+        }
+        config.destination = destination;
+        controlsChanged(client);
+        feedback(client, "Destination: " + destination.label + ". Farming " + (config.enabled ? "ON." : "OFF; use /sxp on to start."));
+        return 1;
+    }
+
+    private void controlsChanged(Minecraft client) {
+        resetState();
+        connectionRecovery.reset(false);
+        recoveryFailures = 0;
+        warnedUnconfigured = false;
+        try {
+            saveConfig(config);
+        } catch (Exception e) {
+            LOGGER.error("Could not save SocialXPFarm controls.", e);
+            feedback(client, "Settings changed for this session, but could not be saved. Check the log.");
+        }
+    }
+
+    private static void feedback(Minecraft client, String message) {
+        LOGGER.info(message);
+        if (client.player != null) client.player.sendSystemMessage(Component.literal("[SocialXPFarm] " + message));
     }
 
     private boolean tryClickConfiguredProfile(Minecraft client) {
@@ -348,9 +439,14 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         return title.contains("SKYBLOCK");
     }
 
-    private static boolean isGuesting(Minecraft client) {
-        String title = sidebarTitle(client);
-        return title.contains("SKYBLOCK") && title.contains("GUEST");
+    private static List<String> sidebarLines(Minecraft client) {
+        if (client.level == null) return List.of();
+        var scoreboard = client.level.getScoreboard();
+        Objective objective = scoreboard.getDisplayObjective(DisplaySlot.SIDEBAR);
+        if (objective == null) return List.of();
+        return scoreboard.listPlayerScores(objective).stream().filter(score -> !score.isHidden())
+                .map(score -> PlayerTeam.formatNameForTeam(scoreboard.getPlayersTeam(score.owner()), score.ownerName()).getString())
+                .toList();
     }
 
     private static String sidebarTitle(Minecraft client) {
@@ -412,8 +508,9 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         RETRY_DELAY
     }
 
-    private static final class Config {
+    static final class Config {
         boolean enabled = true;
+        IslandDestination destination = IslandDestination.GUEST;
         String targetPlayer = "";
         String profileName = "";
 
@@ -432,6 +529,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         int maxRetryDelayTicks = 1200;
 
         void normalize() {
+            if (destination == null) destination = IslandDestination.GUEST;
             if (targetPlayer == null) targetPlayer = "";
             if (profileName == null) profileName = "";
             guestExitGraceTicks = Math.max(20, guestExitGraceTicks);
@@ -449,7 +547,11 @@ public final class SocialXPFarmClient implements ClientModInitializer {
         }
 
         boolean isConfigured() {
-            return !targetPlayer.isBlank() && !profileName.isBlank();
+            return destination.isConfigured(targetPlayer, profileName);
+        }
+
+        boolean shouldRun() {
+            return enabled && isConfigured();
         }
     }
 }
