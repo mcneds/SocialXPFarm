@@ -10,6 +10,8 @@ Small client-side Fabric **26.2** mod that keeps a Hypixel SkyBlock alt guesting
 4. Launch once to create `config/socialxpfarm.json`, then close Minecraft and set `targetPlayer` and `profileName`.
 5. Relaunch and connect to Hypixel. Recovery starts automatically when both destination values are configured.
 
+When updating, replace the old SocialXPFarm jar and restart each Minecraft instance. Keep **only one enabled SocialXPFarm jar** in each instance's `mods/` folder: leaving both `SocialXPFarm-latest.jar` and a downloaded `SocialXPFarm-latest(1).jar` can leave the older build selected. Copying a new jar into a running instance does not update its loaded code.
+
 ## Recovery behavior
 
 The mod treats the `SKYBLOCK GUEST` sidebar as healthy; the island owner does not need to remain online. If guest mode disappears for a few seconds, it rejoins SkyBlock, sends `/visit <targetPlayer>`, and selects a profile in the visit menu.
@@ -37,6 +39,8 @@ Reconnect delays include up to 20% random variation within the configured cap. T
 - `SKYBLOCK GUEST` alone does not verify the island owner/profile or prove that the server is progressing. The current visit-menu logic can fall back to the only visitable profile head.
 - This mod cannot restart a crashed JVM, wake a sleeping computer, or fix an unavailable server or destination restrictions.
 - Builds and automated tests pass; the recovery flows still need live Hypixel validation.
+
+`Connection reset by peer` (including Netty's `recvAddress(..) ... error(-104)`) is treated as a transient disconnect and keeps retrying with backoff. It is not an expired-session error. If that screen stays open without any `Disconnect classified` or `Reconnecting` entries in `logs/latest.log`, check that the current jar is the only enabled copy, restart the instance, and verify that the mod is enabled with a configured destination.
 
 See the [disconnect research and recovery matrix](docs/disconnect-recovery.md) for sources, scenario coverage, and the in-game validation checklist.
 

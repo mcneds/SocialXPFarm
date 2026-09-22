@@ -9,6 +9,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RecoveryPolicyTest {
+    @Test
+    void nativeConnectionResetFromDisconnectScreenKeepsRetrying() {
+        Component reason = Component.translatable("disconnect.genericReason",
+                "Internal Exception: io.netty.channel.unix.Errors$NativeIoException: "
+                        + "recvAddress(..) failed with error(-104): Connection reset by peer");
+        assertEquals(RecoveryPolicy.Action.RETRY, RecoveryPolicy.classify(reason));
+        assertFalse(ConnectionRecovery.isSessionFailure(reason));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"multiplayer.disconnect.banned.reason", "multiplayer.disconnect.banned_ip.expiration",
             "disconnect.loginFailedInfo.insufficientPrivileges", "multiplayer.disconnect.duplicate_login",
