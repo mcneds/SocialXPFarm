@@ -14,14 +14,14 @@ class PhoneLoginSessionTest {
     private final User original = new User("Alt", UUID.randomUUID(), "synthetic-live", Optional.empty(), Optional.empty());
     private final Queue<Runnable> work = new ArrayDeque<>();
     private RefreshTokenStore store() { return new RefreshTokenStore(temp.resolve("auth")); }
-    @FunctionalInterface interface DeviceWork {
-        User run(User expected, Consumer<DevicePrompt> display, SessionRefresh.Save save) throws Exception;
+    @FunctionalInterface interface BrowserWork {
+        User run(User expected, Consumer<BrowserLogin> display, SessionRefresh.Save save) throws Exception;
     }
-    private PhoneLoginSession session(DeviceWork device) {
+    private PhoneLoginSession session(BrowserWork device) {
         var backend = new SessionRefresh.Backend() {
             public User refresh(RefreshTokenStore.Credential saved, SessionRefresh.Save save) { throw new AssertionError("Test must bypass silent refresh"); }
             public User pair(User expected, Consumer<URI> browser, SessionRefresh.Save save) { throw new AssertionError("Test must never launch desktop browser"); }
-            public User pairDevice(User expected, String clientId, Consumer<DevicePrompt> display, SessionRefresh.Save save) throws Exception {
+            public User pairBrowser(User expected, String clientId, Consumer<BrowserLogin> display, SessionRefresh.Save save) throws Exception {
                 assertEquals(MicrosoftAuthClient.CLIENT_ID, clientId);
                 return device.run(expected, display, save);
             }
@@ -30,7 +30,11 @@ class PhoneLoginSessionTest {
     }
     private PhoneLoginSession successful() {
         return session((expected, display, save) -> {
-            display.accept(new DevicePrompt("TEST-CODE", "https://microsoft.com/devicelogin", 2_000_000_000_000L));
+            display.accept(new BrowserLogin() {
+                public BrowserPrompt prompt() { return new BrowserPrompt("https://example.test/synthetic", 2_000_000_000_000L); }
+                public boolean submit(String address) { return false; }
+                public void close() { }
+            });
             save.accept(new RefreshTokenStore.Credential(expected.getProfileId(), expected.getName(), "synthetic-new-refresh"));
             return new User(expected.getName(), expected.getProfileId(), "synthetic-renewed", Optional.empty(), Optional.empty());
         });
@@ -51,11 +55,11 @@ class PhoneLoginSessionTest {
         session.command(session.context(), "login");
         assertEquals("signing_in", session.state());
         work.remove().run();
-        assertNotNull(session.prompt());
+        assertNotNull(session.browserPrompt());
         session.tick(true, original);
         assertEquals("paired", session.state());
         assertFalse(session.canLogin());
-        assertNull(session.prompt());
+        assertNull(session.browserPrompt());
         assertEquals("synthetic-live", original.getAccessToken());
         assertSame(original, session.expected());
         assertEquals("synthetic-new-refresh", store().load(original.getProfileId()).orElseThrow().refreshToken());
@@ -101,7 +105,7 @@ class PhoneLoginSessionTest {
             session.tick(enabled, enabled ? changed : original);
             work.remove().run();
             assertFalse(session.canLogin());
-            assertNull(session.prompt());
+            assertNull(session.browserPrompt());
             assertTrue(store().load(original.getProfileId()).isEmpty());
             session.command(session.context(), "login");
             assertTrue(work.isEmpty());
@@ -115,7 +119,7 @@ class PhoneLoginSessionTest {
         work.remove().run();
         session.command(session.context(), "login");
         assertFalse(session.canLogin());
-        assertNull(session.prompt());
+        assertNull(session.browserPrompt());
         assertTrue(work.isEmpty());
         assertTrue(store().load(original.getProfileId()).isEmpty());
     }
@@ -129,8 +133,48 @@ class PhoneLoginSessionTest {
             session.tick(true, original);
             assertEquals("needs_login", session.state());
             assertTrue(session.canLogin());
-            assertNull(session.prompt());
+            assertNull(session.browserPrompt());
             assertEquals("synthetic-existing", store().load(original.getProfileId()).orElseThrow().refreshToken());
         }
     }
+    @Test void remoteCallbackCompletesOnlyCurrentPhoneAttemptAndKeepsLiveSession() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var returned = new java.util.concurrent.CountDownLatch(1);
+        var backend = new SessionRefresh.Backend() {
+            public User refresh(RefreshTokenStore.Credential saved, SessionRefresh.Save save) { throw new AssertionError(); }
+            public User pair(User expected, Consumer<URI> browser, SessionRefresh.Save save) { throw new AssertionError(); }
+            public User pairBrowser(User expected, String clientId, Consumer<BrowserLogin> display, SessionRefresh.Save save) throws Exception {
+                try (var callback = new OAuthCallback(clientId)) {
+                    display.accept(callback);
+                    entered.countDown();
+                    assertEquals("synthetic-phone", callback.awaitCode());
+                    save.accept(new RefreshTokenStore.Credential(expected.getProfileId(), expected.getName(), "synthetic-refresh"));
+                    return new User(expected.getName(), expected.getProfileId(), "synthetic-renewed", Optional.empty(), Optional.empty());
+                }
+            }
+        };
+        var runner = new SessionRefresh(store(), backend, System::nanoTime, work -> Thread.startVirtualThread(() -> {
+            try { work.run(); } finally { returned.countDown(); }
+        }));
+        var session = new PhoneLoginSession(runner, original, MicrosoftAuthClient.CLIENT_ID);
+        try {
+            String beforeLogin = session.context();
+            session.command(beforeLogin, "login");
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            var params = OAuthCallback.parseQuery(URI.create(session.browserPrompt().authorizationUri()).getRawQuery());
+            String address = params.get("redirect_uri") + "?state=" + params.get("state") + "&code=synthetic-phone";
+            session.command(beforeLogin, "callback", address);
+            assertNotNull(session.browserPrompt());
+            session.command(session.context(), "callback", address);
+            assertTrue(returned.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            session.tick(true, original);
+            assertEquals("paired", session.state());
+            assertNull(session.browserPrompt());
+            assertEquals("synthetic-live", original.getAccessToken());
+            assertEquals("synthetic-refresh", store().load(original.getProfileId()).orElseThrow().refreshToken());
+            session.command(session.context(), "callback", address);
+            assertEquals("paired", session.state());
+        } finally { session.close(); }
+    }
+
 }

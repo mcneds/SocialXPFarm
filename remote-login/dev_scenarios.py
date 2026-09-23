@@ -8,7 +8,9 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).parent / 'tests'))
 from helpers import config, snapshot, publish, Clock, FakeDiscord, INSTANCE_A, INSTANCE_B, CONTEXT_A, OWNER
-from sxp_remote.core import Registry
+from sxp_remote.core import Registry, browser_parameters
+import json
+from urllib.parse import urlencode
 from sxp_remote.notifications import Notifications
 
 
@@ -54,7 +56,22 @@ async def main():
     await notifications.reconcile()
     registry.command(OWNER, INSTANCE_A, context, 'login')
     context = str(uuid.uuid4())
-    publish(registry, value=snapshot('signing_in', context=context, prompt=prompt))
+    browser = json.loads((Path(__file__).parent / 'tests/fixtures/browser-snapshot.json').read_text())['browserPrompt']
+    browser['expiresAt'] = int((clock() + 300) * 1000)
+    publish(registry, value=snapshot('signing_in', context=context, browserPrompt=browser))
+    params = browser_parameters(browser)
+    callback = params['redirect_uri'] + '?' + urlencode({'state': params['state'], 'code': 'synthetic-callback'})
+    try:
+        registry.command(OWNER, INSTANCE_B, context, 'callback', callback)
+        raise AssertionError('Cross-instance callback accepted')
+    except ValueError:
+        pass
+    submitted = registry.command(OWNER, INSTANCE_A, context, 'callback', callback)
+    assert submitted == registry.command(OWNER, INSTANCE_A, context, 'callback', callback)
+    assert registry.exchange(registry.instances[INSTANCE_A], {'runId': submitted['runId']})['command'] == submitted
+    registry.exchange(registry.instances[INSTANCE_A], {'runId': submitted['runId'], 'ack': submitted['id']})
+    assert registry.instances[INSTANCE_A].command is None
+    print('PASS: browser account picker callback routes once to its intended instance and clears on acknowledgement')
     await notifications.reconcile()
     publish(registry, value=snapshot('paired', context=context, canTest=True))
     await notifications.reconcile()

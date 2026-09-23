@@ -1,0 +1,14 @@
+{
+  "runId": "00000000-0000-0000-0000-000000000003",
+  "context": "00000000-0000-0000-0000-000000000004",
+  "username": "AltA",
+  "accountId": "00000000-0000-0000-0000-000000000001",
+  "state": "signing_in",
+  "message": "Waiting for Microsoft sign-in from your phone.",
+  "canLogin": false,
+  "canTest": false,
+  "browserPrompt": {
+    "authorizationUri": "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=e16699bb-2aa8-46da-b5e3-45cbcce29091&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A43871%2Fcallback&scope=XboxLive.signin+offline_access&state=SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS&prompt=select_account&code_challenge=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC&code_challenge_method=S256",
+    "expiresAt": 2000000000000
+  }
+}

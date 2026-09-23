@@ -13,11 +13,12 @@ class Notifications:
 
     async def reconcile(self):
         for instance in self.registry.instances.values():
+            self.registry.expire_command(instance)
             if self.clock() < self.retry_at.get(instance.id, 0):
                 continue
             online = self.registry.online(instance)
             snapshot = instance.snapshot or {}
-            prompt = snapshot.get('prompt') if online and snapshot.get('state') == 'signing_in' else None
+            prompt = (snapshot.get('browserPrompt') or snapshot.get('prompt')) if online and snapshot.get('state') == 'signing_in' else None
             if prompt and prompt['expiresAt'] <= self.registry.wall() * 1000:
                 prompt = None
             stamp = (online, snapshot.get('context'), snapshot.get('state'), snapshot.get('canLogin'),

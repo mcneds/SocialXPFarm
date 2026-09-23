@@ -1,23 +1,78 @@
-"""Pure protocol/state machine; no Discord SDK and no Microsoft credentials."""
+"""Pure protocol/state machine; no Discord SDK and no reusable Microsoft tokens. Callback codes are transient and never persisted."""
 from dataclasses import dataclass, field
 import hmac
 import json
 from pathlib import Path
 import re
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qsl
 import uuid
 
 from .config import private_write, load, login_email
 
 STATES = {'idle', 'disabled', 'renewing', 'needs_login', 'signing_in', 'signed_in', 'restored', 'cancelled', 'failed', 'paired'}
-SNAPSHOT_KEYS = {'runId', 'context', 'username', 'accountId', 'state', 'message', 'canLogin', 'prompt', 'canTest'}
+SNAPSHOT_KEYS = {'runId', 'context', 'username', 'accountId', 'state', 'message', 'canLogin', 'prompt', 'canTest', 'browserPrompt'}
 
 
 def identifier(value):
     if not isinstance(value, str):
         raise ValueError('Invalid identifier')
     return str(uuid.UUID(value))
+
+
+def unique_query(raw):
+    if re.search(r'%(?![0-9a-fA-F]{2})', raw):
+        raise ValueError('Invalid query encoding')
+    pairs = parse_qsl(raw, keep_blank_values=True, strict_parsing=True, errors='strict', max_num_fields=20)
+    values = dict(pairs)
+    if len(values) != len(pairs):
+        raise ValueError('Duplicate query parameter')
+    return values
+
+
+def browser_parameters(prompt):
+    try:
+        if not isinstance(prompt, dict) or set(prompt) != {'authorizationUri', 'expiresAt'} or type(prompt['expiresAt']) is not int:
+            raise ValueError()
+        address = prompt['authorizationUri']
+        if not isinstance(address, str) or len(address) > 2000:
+            raise ValueError()
+        uri = urlparse(address)
+        if (address.split('?')[0] != 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize'
+                or uri.fragment):
+            raise ValueError()
+        query = unique_query(uri.query)
+        if (set(query) != {'client_id', 'response_type', 'redirect_uri', 'scope', 'state', 'prompt', 'code_challenge', 'code_challenge_method'}
+                or query['response_type'] != 'code' or query['prompt'] != 'select_account'
+                or query['scope'] != 'XboxLive.signin offline_access' or query['code_challenge_method'] != 'S256'
+                or not re.fullmatch(r'[A-Za-z0-9_-]{43}', query['state'])
+                or not re.fullmatch(r'[A-Za-z0-9_-]{43}', query['code_challenge'])
+                or not re.fullmatch(r'http://localhost:[0-9]{1,5}/callback', query['redirect_uri'])
+                or not 1 <= urlparse(query['redirect_uri']).port <= 65535):
+            raise ValueError()
+        identifier(query['client_id'])
+        return query
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        raise ValueError('Invalid browser sign-in prompt') from None
+
+
+def validate_callback(prompt, address):
+    try:
+        if not isinstance(address, str) or not 1 <= len(address) <= 4000:
+            raise ValueError()
+        address = address.strip()
+        expected = browser_parameters(prompt)
+        uri = urlparse(address)
+        if address.split('?')[0] != expected['redirect_uri'] or '#' in address or any(ord(c) <= 32 or ord(c) >= 127 or c in '<>"{}|\\^`' for c in address):
+            raise ValueError()
+        query = unique_query(uri.query)
+        if (not hmac.compare_digest(query.get('state', ''), expected['state'])
+                or ('code' in query) == ('error' in query)
+                or not query.get('code', query.get('error', '')).strip()):
+            raise ValueError()
+        return address
+    except (ValueError, TypeError, KeyError, UnicodeError):
+        raise ValueError('That address does not match this sign-in. Copy the entire final localhost callback address from the current Microsoft sign-in tab.') from None
 
 
 def validate_snapshot(value, run_id):
@@ -49,6 +104,11 @@ def validate_snapshot(value, run_id):
             raise ValueError('Invalid device prompt')
         if value['state'] != 'signing_in':
             raise ValueError('Prompt outside sign-in')
+    browser = value.get('browserPrompt')
+    if browser is not None:
+        browser_parameters(browser)
+        if value['state'] != 'signing_in' or prompt is not None:
+            raise ValueError('Browser prompt outside sign-in or mixed with a device prompt')
     return dict(value)
 
 
@@ -138,17 +198,42 @@ class Registry:
         else:
             # Polling alone cannot keep stale game-thread state alive indefinitely.
             pass
-        pending = instance.command
-        if pending and (body.get('ack') == pending['id'] or self.clock() - instance.command_started >= 60 or not self.online(instance)):
+        if instance.command and body.get('ack') == instance.command['id']:
             instance.command = None
+        self.expire_command(instance)
         return {'command': instance.command}
 
-    def command(self, owner, instance_id, context, action):
+    def expire_command(self, instance):
+        pending = instance.command
+        if not pending:
+            return
+        snapshot = instance.snapshot or {}
+        prompt = snapshot.get('browserPrompt')
+        if (self.clock() - instance.command_started >= 60 or not self.online(instance)
+                or (pending['action'] == 'callback' and (snapshot.get('state') != 'signing_in'
+                    or not prompt or prompt['expiresAt'] <= self.wall() * 1000))):
+            instance.command = None
+
+    def callback_request(self, owner, instance_id, context):
+        if owner != self.owner:
+            raise PermissionError('Only the configured owner may control sign-in')
+        instance = self.instances.get(instance_id)
+        if instance is None or not self.online(instance):
+            raise ValueError('Instance is offline; check its PC')
+        snapshot = instance.snapshot
+        prompt = snapshot.get('browserPrompt')
+        if (not context or context != snapshot['context'] or snapshot['state'] != 'signing_in'
+                or not prompt or prompt['expiresAt'] <= self.wall() * 1000):
+            raise ValueError('This browser sign-in expired or finished. Cancel and start a new sign-in if needed.')
+        return prompt
+
+    def command(self, owner, instance_id, context, action, callback=None):
         if owner != self.owner:
             raise PermissionError('Only the configured owner may control sign-in')
         instance = self.instances.get(instance_id)
         if instance is None:
             raise ValueError('Unknown instance. Select an autocomplete entry or copy its ID from /sxp status.')
+        self.expire_command(instance)
         if not self.online(instance):
             raise ValueError('Instance is offline; check its PC')
         snapshot = instance.snapshot
@@ -164,17 +249,25 @@ class Registry:
         elif action == 'login':
             if not snapshot['canLogin'] or snapshot['state'] not in {'needs_login', 'cancelled'}:
                 raise ValueError('This instance is not waiting for sign-in. Use /sxp test for a remote phone test.')
+        elif action == 'callback':
+            callback = validate_callback(self.callback_request(owner, instance_id, context), callback)
         elif action == 'cancel':
             if snapshot['state'] != 'signing_in':
                 raise ValueError('There is no phone sign-in to cancel')
         else:
             raise ValueError('Unknown command')
+        if action != 'callback' and callback is not None:
+            raise ValueError('Unexpected callback data')
+        if action == 'cancel' and instance.command and instance.command['action'] == 'callback':
+            instance.command = None
         if instance.command and self.clock() - instance.command_started < 60:
-            if instance.command['action'] == action:
+            if instance.command['action'] == action and instance.command.get('callback') == callback:
                 return instance.command
             raise ValueError('Another action is still being delivered')
         instance.command = {'id': str(uuid.uuid4()), 'runId': snapshot['runId'], 'context': context,
                             'action': action, 'expiresAt': int((self.wall() + 60) * 1000)}
+        if callback is not None:
+            instance.command['callback'] = callback
         instance.command_started = self.clock()
         return instance.command
 

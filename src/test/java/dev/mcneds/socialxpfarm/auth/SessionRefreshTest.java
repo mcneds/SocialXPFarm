@@ -181,4 +181,48 @@ class SessionRefreshTest {
         assertNull(runner.result());
         assertNull(runner.devicePrompt());
     }
+    @Test void browserCancellationClosesReceiverRejectsLatePublicationAndCannotSave() throws Exception {
+        seed();
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1), finished = new CountDownLatch(1);
+        AtomicReference<OAuthCallback> receiver = new AtomicReference<>(), late = new AtomicReference<>();
+        AtomicBoolean rejected = new AtomicBoolean(), rejectedSave = new AtomicBoolean();
+        var backend = new SessionRefresh.Backend() {
+            public User refresh(RefreshTokenStore.Credential c, SessionRefresh.Save save) { throw new AssertionError(); }
+            public User pair(User user, Consumer<URI> browser, SessionRefresh.Save save) { throw new AssertionError(); }
+            public User pairBrowser(User user, String clientId, Consumer<BrowserLogin> display, SessionRefresh.Save save) throws Exception {
+                try (var first = new OAuthCallback(); var second = new OAuthCallback()) {
+                    receiver.set(first);
+                    late.set(second);
+                    display.accept(first);
+                    entered.countDown();
+                    while (release.getCount() > 0) {
+                        try { release.await(); } catch (InterruptedException ignored) { }
+                    }
+                    try { display.accept(second); } catch (CancellationException e) { rejected.set(true); }
+                    try { save.accept(new RefreshTokenStore.Credential(alt, "Alt", "synthetic-late")); }
+                    catch (CancellationException e) { rejectedSave.set(true); }
+                    return user(alt, "synthetic-new");
+                } finally { finished.countDown(); }
+            }
+        };
+        var runner = new SessionRefresh(store(), backend, clock::get, action -> Thread.startVirtualThread(action));
+        runner.pairBrowser(original, MicrosoftAuthClient.CLIENT_ID);
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            assertNotNull(runner.browserPrompt());
+            assertFalse(runner.submitCallback("https://evil.test/?code=synthetic"));
+            runner.cancel();
+            assertNull(runner.browserPrompt());
+            assertNull(receiver.get().prompt());
+            assertFalse(runner.submitCallback(receiver.get().redirect() + "?state=" + receiver.get().state + "&code=late"));
+        } finally { release.countDown(); }
+        assertTrue(finished.await(5, TimeUnit.SECONDS));
+        runner.tick();
+        assertTrue(rejected.get());
+        assertTrue(rejectedSave.get());
+        assertNull(late.get().prompt());
+        assertEquals(SessionRefresh.Status.IDLE, runner.status());
+        assertEquals("synthetic-refresh", store().load(alt).orElseThrow().refreshToken());
+    }
+
 }

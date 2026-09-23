@@ -59,4 +59,52 @@ class OAuthCallbackTest {
             assertFalse(error.toString().contains("synthetic-secret"));
         }
     }
+    @Test void pastedCallbackRequiresExactAddressAndIsSingleUseAcrossBothTransports() throws Exception {
+        try (var first = new OAuthCallback(); var other = new OAuthCallback()) {
+            String query = "?state=" + first.state + "&code=synthetic-code";
+            for (String wrong : new String[]{
+                    other.redirect() + query, first.redirect().replace("localhost", "127.0.0.1") + query,
+                    first.redirect().replace("http:", "https:") + query,
+                    first.redirect() + "/extra" + query, first.redirect() + query + "#fragment",
+                    first.redirect() + query + "&code=duplicate", first.redirect() + query + "&error=denied",
+                    first.redirect() + "?state=" + other.state + "&code=wrong-instance",
+                    "https://evil.test/" + query, "not a URL", first.redirect() + "?state=" + first.state + "&code=",
+                    first.redirect() + "?state=" + first.state + "&code=%ZZ"}) {
+                assertFalse(first.submit(wrong));
+                assertNotNull(first.prompt());
+            }
+            assertTrue(first.submit(first.redirect() + query));
+            assertNull(first.prompt());
+            assertFalse(first.submit(first.redirect() + query));
+            assertEquals(400, send(first, query.substring(1)));
+            assertEquals("synthetic-code", first.awaitCode());
+        }
+    }
+
+    @Test void expiredAndClosedReceiversRejectLateCallbacksWithoutWaitingFiveMinutes() throws Exception {
+        var now = new java.util.concurrent.atomic.AtomicLong();
+        try (var callback = new OAuthCallback(MicrosoftAuthClient.CLIENT_ID, now::get)) {
+            now.set(300_000_000_000L);
+            assertNull(callback.prompt());
+            assertFalse(callback.submit(callback.redirect() + "?state=" + callback.state + "&code=late"));
+            assertEquals(AuthFailure.Kind.LOGIN, assertThrows(AuthFailure.class, callback::awaitCode).kind);
+        }
+        var callback = new OAuthCallback();
+        String address = callback.redirect() + "?state=" + callback.state + "&code=late";
+        callback.close();
+        assertFalse(callback.submit(address));
+        assertNull(callback.prompt());
+    }
+
+    @Test void browserPromptKeepsVerifierPrivateAndUsesConfiguredClient() throws Exception {
+        String clientId = java.util.UUID.randomUUID().toString();
+        try (var callback = new OAuthCallback(clientId)) {
+            var prompt = callback.prompt();
+            assertEquals(clientId, OAuthCallback.parseQuery(URI.create(prompt.authorizationUri()).getRawQuery()).get("client_id"));
+            assertFalse(prompt.authorizationUri().contains(callback.verifier));
+            assertFalse(prompt.toString().contains(callback.state));
+            assertTrue(prompt.expiresAt() > System.currentTimeMillis());
+        }
+    }
+
 }

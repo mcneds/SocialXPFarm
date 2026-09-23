@@ -157,4 +157,59 @@ class MicrosoftAuthClientTest {
         assertEquals(clientId, rotated.get().clientId());
         assertEquals(ALT, result.getProfileId());
     }
+    @Test void pastedBrowserCallbackRedeemsOnceWithPkceAndSavesVerifiedConfiguredClient() throws Exception {
+        String clientId = UUID.randomUUID().toString();
+        AtomicReference<Map<String, String>> authorization = new AtomicReference<>();
+        AtomicReference<RefreshTokenStore.Credential> credential = new AtomicReference<>();
+        List<String> calls = new ArrayList<>();
+        var client = new MicrosoftAuthClient((endpoint, body, form, bearer) -> {
+            calls.add(endpoint);
+            assertNull(credential.get());
+            if (endpoint.equals(MicrosoftAuthClient.TOKEN)) {
+                var fields = OAuthCallback.parseQuery(body);
+                assertEquals(clientId, fields.get("client_id"));
+                assertEquals("authorization_code", fields.get("grant_type"));
+                assertEquals("synthetic-code", fields.get("code"));
+                assertEquals(authorization.get().get("redirect_uri"), fields.get("redirect_uri"));
+                assertEquals(authorization.get().get("code_challenge"), OAuthCallback.challenge(fields.get("code_verifier")));
+            }
+            return success(endpoint);
+        });
+        var expected = new User("Alt", ALT, "synthetic-live", Optional.empty(), Optional.empty());
+        User renewed = client.pairBrowser(expected, clientId, receiver -> {
+            var params = OAuthCallback.parseQuery(URI.create(receiver.prompt().authorizationUri()).getRawQuery());
+            authorization.set(params);
+            String address = params.get("redirect_uri") + "?state=" + params.get("state") + "&code=synthetic-code";
+            assertTrue(receiver.submit(address));
+            assertFalse(receiver.submit(address));
+        }, credential::set);
+        assertEquals(ALT, renewed.getProfileId());
+        assertEquals(clientId, credential.get().clientId());
+        assertEquals(1, Collections.frequency(calls, MicrosoftAuthClient.TOKEN));
+    }
+
+    @Test void wrongAccountExpiredGrantAndDownstreamOutageNeverSaveOrRedeemTwice() {
+        for (String failing : List.of(MicrosoftAuthClient.PROFILE, MicrosoftAuthClient.TOKEN, MicrosoftAuthClient.XBOX)) {
+            List<String> calls = new ArrayList<>();
+            var client = new MicrosoftAuthClient((endpoint, body, form, bearer) -> {
+                calls.add(endpoint);
+                if (!endpoint.equals(failing)) return success(endpoint);
+                return switch (failing) {
+                    case MicrosoftAuthClient.PROFILE -> new MicrosoftAuthClient.Response(200,
+                            "{\"id\":\"00000000000000000000000000000002\",\"name\":\"Other\"}");
+                    case MicrosoftAuthClient.TOKEN -> new MicrosoftAuthClient.Response(400,
+                            "{\"error\":\"invalid_grant\",\"error_description\":\"synthetic-secret\"}");
+                    default -> new MicrosoftAuthClient.Response(503, "synthetic-secret");
+                };
+            });
+            var expected = new User("Alt", ALT, "synthetic-live", Optional.empty(), Optional.empty());
+            AuthFailure error = assertThrows(AuthFailure.class, () -> client.pairBrowser(expected, MicrosoftAuthClient.CLIENT_ID, receiver -> {
+                var params = OAuthCallback.parseQuery(URI.create(receiver.prompt().authorizationUri()).getRawQuery());
+                assertTrue(receiver.submit(params.get("redirect_uri") + "?state=" + params.get("state") + "&code=synthetic-code"));
+            }, value -> fail("Failed sign-in must not overwrite saved credential")));
+            assertFalse(error.toString().contains("synthetic-secret"));
+            assertEquals(1, Collections.frequency(calls, MicrosoftAuthClient.TOKEN));
+        }
+    }
+
 }

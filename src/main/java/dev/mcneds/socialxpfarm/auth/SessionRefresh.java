@@ -13,6 +13,9 @@ public final class SessionRefresh {
     public interface Backend {
         User refresh(RefreshTokenStore.Credential saved, Save save) throws Exception;
         User pair(User expected, Consumer<URI> browser, Save save) throws Exception;
+        default User pairBrowser(User expected, String clientId, Consumer<BrowserLogin> display, Save save) throws Exception {
+            throw new AuthFailure(AuthFailure.Kind.LOCAL, "Browser sign-in is unavailable in this backend.");
+        }
         default User pairDevice(User expected, String clientId, Consumer<DevicePrompt> display, Save save) throws Exception {
             throw new AuthFailure(AuthFailure.Kind.LOCAL, "Phone sign-in is unavailable in this backend.");
         }
@@ -31,6 +34,7 @@ public final class SessionRefresh {
     private Status status = Status.IDLE;
     private String message = "";
     private DevicePrompt devicePrompt;
+    private BrowserLogin browserLogin;
 
     public SessionRefresh(RefreshTokenStore store, Backend backend) {
         this(store, backend, System::nanoTime, action -> Thread.startVirtualThread(action));
@@ -89,6 +93,29 @@ public final class SessionRefresh {
         message = "Waiting for Microsoft sign-in from your phone.";
     }
 
+    public synchronized void pairBrowser(User user, String clientId) {
+        cancel();
+        expected = user;
+        long operation = generation;
+        launch(true, save -> backend.pairBrowser(user, clientId, login -> {
+            synchronized (this) {
+                if (operation != generation || Thread.currentThread().isInterrupted()) {
+                    login.close();
+                    throw new CancellationException();
+                }
+                browserLogin = login;
+            }
+        }, save));
+    }
+
+    public synchronized BrowserPrompt browserPrompt() {
+        return status == Status.RUNNING && browserLogin != null ? browserLogin.prompt() : null;
+    }
+
+    public synchronized boolean submitCallback(String address) {
+        return status == Status.RUNNING && browserLogin != null && browserLogin.submit(address);
+    }
+
     public synchronized DevicePrompt devicePrompt() { return status == Status.RUNNING ? devicePrompt : null; }
 
     @FunctionalInterface private interface Work { User run(Save save) throws Exception; }
@@ -121,6 +148,8 @@ public final class SessionRefresh {
     public synchronized void tick() {
         if (status == Status.RETRY_WAIT && clock.getAsLong() - retryStarted >= 60_000_000_000L) refresh();
         if (status != Status.RUNNING || task == null || !task.isDone()) return;
+        if (browserLogin != null) browserLogin.close();
+        browserLogin = null;
         try {
             result = task.get();
             status = Status.READY;
@@ -153,6 +182,8 @@ public final class SessionRefresh {
         task = null;
         result = null;
         devicePrompt = null;
+        if (browserLogin != null) browserLogin.close();
+        browserLogin = null;
         expected = null;
         status = Status.IDLE;
         message = "";

@@ -39,18 +39,39 @@ def authorized(registry, interaction):
 
 
 class Controls(discord.ui.View):
-    def __init__(self, bot, instance_id, context, login=True, cancel=False):
+    def __init__(self, bot, instance_id, context, login=True, cancel=False, can_callback=False):
         super().__init__(timeout=None)
-        for action, label, enabled in [('login', 'Sign in', login), ('cancel', 'Cancel', cancel)]:
+        for action, label, enabled in [('login', 'Sign in', login), ('cancel', 'Cancel', cancel), ('callback', 'Paste callback', can_callback)]:
             button = discord.ui.Button(label=label, custom_id=f'sxp:{action}:{instance_id}:{context}',
                                        style=discord.ButtonStyle.primary if action == 'login' else discord.ButtonStyle.secondary,
                                        disabled=not enabled)
 
             async def callback(interaction, selected=action):
-                await bot.action(interaction, instance_id, context, selected)
+                if selected == 'callback':
+                    await bot.open_callback(interaction, instance_id, context)
+                else:
+                    await bot.action(interaction, instance_id, context, selected)
 
             button.callback = callback
             self.add_item(button)
+
+
+class CallbackModal(discord.ui.Modal, title='Finish Microsoft sign-in'):
+    address = discord.ui.TextInput(label='Full localhost callback address', style=discord.TextStyle.paragraph,
+                                   placeholder='http://localhost:.../callback?code=...&state=...', max_length=4000)
+
+    def __init__(self, bot, instance_id, context):
+        super().__init__(timeout=300)
+        self.bot, self.instance_id, self.context = bot, instance_id, context
+
+    async def on_submit(self, interaction):
+        await self.bot.submit_callback(interaction, self.instance_id, self.context, str(self.address))
+
+    async def on_error(self, interaction, error):
+        # Discord's default modal error handler prints tracebacks; never log submitted codes.
+        LOG.error('Callback form failed; sensitive details omitted.')
+        if not interaction.response.is_done():
+            await interaction.response.send_message('Could not deliver the callback. Try the form again.', ephemeral=True)
 
 
 class Delivery:
@@ -89,8 +110,15 @@ class Delivery:
         }.get(phase, 'Status unavailable.')
         view = None
         if online and state.get('context'):
-            view = Controls(self.bot, instance.id, state['context'], state.get('canLogin', False), phase == 'signing_in')
-        if prompt:
+            view = Controls(self.bot, instance.id, state['context'], state.get('canLogin', False), phase == 'signing_in', bool(prompt and 'authorizationUri' in prompt))
+        if prompt and 'authorizationUri' in prompt:
+            text += (f"\n[Choose Microsoft account]({prompt['authorizationUri']}) — expires <t:{prompt['expiresAt'] // 1000}:R>."
+                     '\nSelect the Microsoft account for this Minecraft instance; use **Use another account** if needed.'
+                     '\nOn your phone, the final **localhost** page may say it cannot connect. This is expected. '
+                     'Copy its **entire address** from the browser address bar, tap **Paste callback** below, and submit it promptly; the code is short-lived.'
+                     '\nOn the Minecraft PC, the callback may complete automatically. '
+                     'Enter passwords only on Microsoft’s website. Put the callback only in the form, never in chat.')
+        elif prompt:
             text += (f"\nOpen {prompt['verificationUri']} and enter **`{prompt['userCode']}`**."
                      f"\nExpires <t:{prompt['expiresAt'] // 1000}:R>. Select **{username}**'s Microsoft account."
                      '\nIf Microsoft shows another account, choose **Use another account** (or **Sign in with a different account**).'
@@ -216,6 +244,29 @@ class Bot(discord.Client):
         except OSError:
             message = 'Could not save the email hint. Check companion configuration permissions.'
         await interaction.followup.send(message, allowed_mentions=discord.AllowedMentions.none())
+
+    async def open_callback(self, interaction, instance_id, context):
+        if not authorized(self.registry, interaction):
+            await interaction.response.send_message('Only the configured owner can use this form in a DM.', ephemeral=True)
+            return
+        try:
+            self.registry.callback_request(interaction.user.id, instance_id, context)
+        except (ValueError, PermissionError) as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        await interaction.response.send_modal(CallbackModal(self, instance_id, context))
+
+    async def submit_callback(self, interaction, instance_id, context, address):
+        if not authorized(self.registry, interaction):
+            await interaction.response.send_message('Only the configured owner can submit this form in a DM.', ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            self.registry.command(interaction.user.id, instance_id, context, 'callback', address)
+            message = 'Callback queued. Wait for the instance to confirm the Minecraft account. If it expires, cancel and sign in again.'
+        except (ValueError, PermissionError) as error:
+            message = str(error)
+        await interaction.followup.send(message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     async def action(self, interaction, instance_id, context, action):
         if not authorized(self.registry, interaction):

@@ -69,13 +69,24 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
     @Override public User pair(User expected, Consumer<URI> browser, SessionRefresh.Save save) throws Exception {
         try (OAuthCallback callback = new OAuthCallback()) {
             browser.accept(callback.authorizeUri());
-            String code = callback.awaitCode();
-            JsonObject tokens = request(TOKEN, form(Map.of("client_id", CLIENT_ID, "grant_type", "authorization_code",
-                    "code", code, "redirect_uri", callback.redirect(), "code_verifier", callback.verifier)), true, null);
-            User user = minecraftUser(required(tokens, "access_token"), expected.getProfileId(), CLIENT_ID);
-            save.accept(new RefreshTokenStore.Credential(user.getProfileId(), user.getName(), required(tokens, "refresh_token")));
-            return user;
+            return finishBrowserPair(expected, CLIENT_ID, callback, save);
         }
+    }
+
+    @Override public User pairBrowser(User expected, String clientId, Consumer<BrowserLogin> display, SessionRefresh.Save save) throws Exception {
+        try (OAuthCallback callback = new OAuthCallback(clientId)) {
+            display.accept(callback);
+            return finishBrowserPair(expected, clientId, callback, save);
+        }
+    }
+
+    private User finishBrowserPair(User expected, String clientId, OAuthCallback callback, SessionRefresh.Save save) throws Exception {
+        String code = callback.awaitCode();
+        JsonObject tokens = request(TOKEN, form(Map.of("client_id", clientId, "grant_type", "authorization_code",
+                "code", code, "redirect_uri", callback.redirect(), "code_verifier", callback.verifier)), true, null);
+        User user = minecraftUser(required(tokens, "access_token"), expected.getProfileId(), clientId);
+        save.accept(new RefreshTokenStore.Credential(user.getProfileId(), user.getName(), required(tokens, "refresh_token"), clientId));
+        return user;
     }
 
     @Override public User pairDevice(User expected, String clientId, Consumer<DevicePrompt> display, SessionRefresh.Save save) throws Exception {

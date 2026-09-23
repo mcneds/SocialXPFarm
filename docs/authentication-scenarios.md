@@ -2,7 +2,7 @@
 
 Version 1.2.0 added saved per-instance Microsoft renewal. Auth Me 9.3.0+26.2 supplies the session installation API. SocialXPFarm performs its own initial OAuth authorization-code flow with PKCE, stores the refresh token, and subsequently exchanges it for Microsoft → Xbox → XSTS → Minecraft credentials. No launcher account files are read.
 
-Version 1.3.0 adds optional phone sign-in through private Discord DMs. See the [remote setup guide](../remote-login/README.md) and [extensive developer scenarios](../remote-login/DEVELOPMENT.md). The original desktop scenarios below still apply when remote mode is not configured.
+Version 1.3.0 adds optional phone sign-in through private Discord DMs. Version 1.3.2 uses the Auth Me-style Microsoft account picker with PKCE and an owner-only form for returning the final localhost callback address from a phone. See the [remote setup guide](../remote-login/README.md) and [extensive developer scenarios](../remote-login/DEVELOPMENT.md). The original desktop scenarios below still apply when remote mode is not configured.
 
 ## Setup and expected behavior
 

@@ -41,13 +41,17 @@ public final class PhoneLoginSession {
         }
     }
 
-    public void command(String requestContext, String action) {
+    public void command(String requestContext, String action) { command(requestContext, action, null); }
+
+    public void command(String requestContext, String action, String callback) {
         if (closed || !context.equals(requestContext)) return;
         if (action.equals("login") && canLogin()) {
             context = UUID.randomUUID().toString();
             state = "signing_in";
-            refresh.pairDevice(expected, clientId);
+            refresh.pairBrowser(expected, clientId);
             message = "Waiting for Microsoft sign-in from your phone.";
+        } else if (action.equals("callback") && state.equals("signing_in")) {
+            refresh.submitCallback(callback);
         } else if (action.equals("cancel") && state.equals("signing_in")) {
             refresh.cancel();
             context = UUID.randomUUID().toString();
@@ -66,5 +70,6 @@ public final class PhoneLoginSession {
     public String state() { return state; }
     public String message() { return message; }
     public boolean canLogin() { return !closed && (state.equals("needs_login") || state.equals("cancelled")); }
+    public BrowserPrompt browserPrompt() { return !closed && state.equals("signing_in") ? refresh.browserPrompt() : null; }
     public DevicePrompt prompt() { return !closed && state.equals("signing_in") ? refresh.devicePrompt() : null; }
 }

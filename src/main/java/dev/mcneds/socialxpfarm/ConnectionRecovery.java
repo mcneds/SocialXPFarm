@@ -209,14 +209,16 @@ public final class ConnectionRecovery {
         }
     }
 
-    void remoteCommand(Minecraft client, String context, String action) {
+    void remoteCommand(Minecraft client, String context, String action, String callback) {
         if (!RemoteLoginBridge.INSTANCE.enabled() || !remoteContext.equals(context) || automaticLogin == null
                 || paused || client.getUser() != rejectedUser || client.gui.screen() != failureScreen) return;
         SessionRefresh.Status status = automaticLogin.status();
         if (action.equals("login") && (status == SessionRefresh.Status.NEEDS_LOGIN || status == SessionRefresh.Status.IDLE)) {
             remoteContext = java.util.UUID.randomUUID().toString();
             remotePhase = "signing_in";
-            automaticLogin.pairDevice(rejectedUser, RemoteLoginBridge.INSTANCE.clientId());
+            automaticLogin.pairBrowser(rejectedUser, RemoteLoginBridge.INSTANCE.clientId());
+        } else if (action.equals("callback") && remotePhase.equals("signing_in")) {
+            automaticLogin.submitCallback(callback);
         } else if (action.equals("cancel") && remotePhase.equals("signing_in")) {
             automaticLogin.cancel();
             remoteContext = java.util.UUID.randomUUID().toString();
@@ -247,7 +249,7 @@ public final class ConnectionRecovery {
         }
         User user = rejectedUser == null ? client.getUser() : rejectedUser;
         return new RemoteLoginBridge.Snapshot(runId, remoteContext, user.getName(), user.getProfileId().toString(),
-                phase, message, canLogin, prompt);
+                phase, message, canLogin, prompt, false, enabled && automaticLogin != null ? automaticLogin.browserPrompt() : null);
     }
 
     private void cancelAutomaticLogin() {

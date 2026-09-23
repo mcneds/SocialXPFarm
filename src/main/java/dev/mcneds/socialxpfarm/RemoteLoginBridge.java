@@ -3,6 +3,7 @@ package dev.mcneds.socialxpfarm;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import dev.mcneds.socialxpfarm.auth.DevicePrompt;
+import dev.mcneds.socialxpfarm.auth.BrowserPrompt;
 import dev.mcneds.socialxpfarm.auth.MicrosoftAuthClient;
 import dev.mcneds.socialxpfarm.auth.PhoneLoginSession;
 import net.fabricmc.loader.api.FabricLoader;
@@ -15,18 +16,27 @@ import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Outbound-only local companion client. No Microsoft credentials are part of this protocol. */
+/** Outbound-only local companion client. Only short-lived callback codes cross this protocol; reusable tokens and PKCE verifiers stay local. */
 final class RemoteLoginBridge {
     static final RemoteLoginBridge INSTANCE = new RemoteLoginBridge();
     private static final Gson JSON = new Gson();
     record Snapshot(String runId, String context, String username, String accountId, String state,
-                    String message, boolean canLogin, DevicePrompt prompt, boolean canTest) {
+                    String message, boolean canLogin, DevicePrompt prompt, boolean canTest, BrowserPrompt browserPrompt) {
+        Snapshot(String runId, String context, String username, String accountId, String state,
+                 String message, boolean canLogin, DevicePrompt prompt, boolean canTest) {
+            this(runId, context, username, accountId, state, message, canLogin, prompt, canTest, null);
+        }
         Snapshot(String runId, String context, String username, String accountId, String state,
                  String message, boolean canLogin, DevicePrompt prompt) {
             this(runId, context, username, accountId, state, message, canLogin, prompt, false);
         }
     }
-    record Command(String id, String runId, String context, String action, long expiresAt) {}
+    record Command(String id, String runId, String context, String action, long expiresAt, String callback) {
+        Command(String id, String runId, String context, String action, long expiresAt) {
+            this(id, runId, context, action, expiresAt, null);
+        }
+        @Override public String toString() { return "RemoteCommand[action=" + action + ", callback=REDACTED]"; }
+    }
     record Config(boolean enabled, String instanceId, String secret, int port, String clientId) {
         Config {
             UUID.fromString(instanceId);
@@ -80,8 +90,8 @@ final class RemoteLoginBridge {
                     cancelTest();
                     testSession = new PhoneLoginSession(AutomaticLogin.create(), client.getUser(), clientId());
                 }
-                else if (testSession != null) testSession.command(command.context(), command.action());
-                else recovery.remoteCommand(client, command.context(), command.action());
+                else if (testSession != null) testSession.command(command.context(), command.action(), command.callback());
+                else recovery.remoteCommand(client, command.context(), command.action(), command.callback());
             }
             handled = command.id();
             acknowledged = command.id();
@@ -95,7 +105,7 @@ final class RemoteLoginBridge {
             return new Snapshot(runId, testSession.context(), testSession.expected().getName(), testSession.expected().getProfileId().toString(),
                     testSession.state(), testSession.message(), testSession.canLogin(), testSession.prompt(),
                     enabled && (testSession.state().equals("paired") || testSession.state().equals("failed"))
-                            && !(client.gui.screen() instanceof AutomaticLoginScreen));
+                            && !(client.gui.screen() instanceof AutomaticLoginScreen), testSession.browserPrompt());
         }
         Snapshot current = ConnectionRecovery.INSTANCE.remoteSnapshot(client, runId, enabled);
         boolean available = enabled && enabled() && connectedToHypixel(client)
@@ -169,6 +179,8 @@ final class RemoteLoginBridge {
         if (command == null || command.id() == null || command.runId() == null || command.context() == null) return false;
         try {
             UUID.fromString(command.id()); UUID.fromString(command.runId()); UUID.fromString(command.context());
+            if ("callback".equals(command.action())) return command.callback() != null && !command.callback().isBlank() && command.callback().length() <= 4000;
+            if (command.callback() != null) return false;
             return "login".equals(command.action()) || "cancel".equals(command.action()) || "test".equals(command.action());
         } catch (IllegalArgumentException e) { return false; }
     }
@@ -187,6 +199,8 @@ final class RemoteLoginBridge {
     static boolean permitted(Snapshot state, Command command, long now) {
         if (!valid(command) || !state.runId().equals(command.runId()) || !state.context().equals(command.context())
                 || command.expiresAt() <= now || command.expiresAt() - now > 65_000) return false;
+        if (command.action().equals("callback")) return state.state().equals("signing_in")
+                && state.browserPrompt() != null && state.browserPrompt().expiresAt() > now;
         if (command.action().equals("test")) return state.canTest() && testState(state.state());
         return command.action().equals("login")
                 ? state.canLogin() && (state.state().equals("needs_login") || state.state().equals("cancelled"))

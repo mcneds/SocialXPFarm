@@ -96,4 +96,22 @@ class RemoteLoginBridgeTest {
         Files.createSymbolicLink(link, file);
         assertThrows(java.io.IOException.class, () -> RemoteLoginBridge.readConfig(link));
     }
+    @Test void browserFixtureAndCallbackCommandsAreBoundToCurrentLiveRequest() throws Exception {
+        String json = Files.readString(Path.of(System.getProperty("sxp.projectDir"), "remote-login/tests/fixtures/browser-snapshot.json"));
+        Gson gson = new Gson();
+        var active = gson.fromJson(json, RemoteLoginBridge.Snapshot.class);
+        assertEquals(com.google.gson.JsonParser.parseString(json), gson.toJsonTree(active));
+        String callback = "http://localhost:43871/callback?code=synthetic-secret&state=" + "S".repeat(43);
+        var command = new RemoteLoginBridge.Command(UUID.randomUUID().toString(), active.runId(), active.context(), "callback", 61000, callback);
+        assertTrue(RemoteLoginBridge.permitted(active, command, 1000));
+        assertFalse(command.toString().contains("synthetic-secret"));
+        assertFalse(RemoteLoginBridge.permitted(active, command, 61000));
+        assertFalse(RemoteLoginBridge.permitted(state("signing_in", false), command, 1000));
+        assertFalse(RemoteLoginBridge.valid(new RemoteLoginBridge.Command(command.id(), active.runId(), active.context(), "login", 61000, callback)));
+        assertFalse(RemoteLoginBridge.valid(new RemoteLoginBridge.Command(command.id(), active.runId(), active.context(), "callback", 61000, "x".repeat(4001))));
+        var expired = new RemoteLoginBridge.Snapshot(active.runId(), active.context(), active.username(), active.accountId(), "signing_in", "", false, null, false,
+                new dev.mcneds.socialxpfarm.auth.BrowserPrompt(active.browserPrompt().authorizationUri(), 1000));
+        assertFalse(RemoteLoginBridge.permitted(expired, command, 1000));
+    }
+
 }

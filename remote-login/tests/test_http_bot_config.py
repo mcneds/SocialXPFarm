@@ -40,6 +40,24 @@ class LocalHttpTests(unittest.IsolatedAsyncioTestCase):
         async with self.http.post(self.url, json={}, headers={'Authorization': 'Bearer ' + SECRET_B}) as response:
             self.assertEqual(401, response.status)
 
+    async def test_browser_callback_delivers_over_authenticated_loopback_and_clears_on_ack(self):
+        from test_browser_login import prompt, address
+        value = snapshot('signing_in', browserPrompt=prompt())
+        async with self.http.post(self.url, json={'runId': RUN_A, 'snapshot': value}, headers=self.headers) as response:
+            self.assertEqual(200, response.status)
+        # Use a future expiry with the real wall clock used by this HTTP test.
+        value['browserPrompt']['expiresAt'] = int((self.registry.wall() + 300) * 1000)
+        publish(self.registry, value=value)
+        command = self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'callback', address())
+        async with self.http.post(self.url, json={'runId': RUN_A}, headers={'Authorization': 'Bearer ' + SECRET_B}) as response:
+            self.assertEqual(401, response.status)
+            self.assertNotIn('synthetic-secret', await response.text())
+        async with self.http.post(self.url, json={'runId': RUN_A}, headers=self.headers) as response:
+            self.assertEqual(command, (await response.json())['command'])
+            self.assertEqual('no-store', response.headers['Cache-Control'])
+        async with self.http.post(self.url, json={'runId': RUN_A, 'ack': command['id']}, headers=self.headers) as response:
+            self.assertIsNone((await response.json())['command'])
+
     async def test_browser_origin_rebinding_and_bad_payload_fail_closed(self):
         for additions in [{'Origin': 'https://evil.test'}, {'Host': 'evil.test'}]:
             async with self.http.post(self.url, json={}, headers=dict(self.headers, **additions)) as response:

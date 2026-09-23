@@ -9,28 +9,34 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /** Per-login loopback listener, with independent ports, state and PKCE for concurrent alt instances. */
-final class OAuthCallback implements AutoCloseable {
+final class OAuthCallback implements BrowserLogin {
     private final HttpServer server;
     private final CompletableFuture<String> code = new CompletableFuture<>();
     final String verifier = random();
     final String state = random();
 
-    OAuthCallback() throws IOException {
+    private final String clientId;
+    private final java.util.function.LongSupplier clock;
+    private final long started;
+    private final long expiresAt = System.currentTimeMillis() + 300_000;
+
+    OAuthCallback() throws IOException { this(MicrosoftAuthClient.CLIENT_ID, System::nanoTime); }
+    OAuthCallback(String clientId) throws IOException { this(clientId, System::nanoTime); }
+    OAuthCallback(String clientId, java.util.function.LongSupplier clock) throws IOException {
+        UUID.fromString(clientId);
+        this.clientId = clientId;
+        this.clock = clock;
+        started = clock.getAsLong();
         server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/callback", exchange -> {
             int status = 400;
             String message = "Invalid login callback. Return to Minecraft.";
             try {
-                Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
-                if (exchange.getRequestMethod().equals("GET") && exchange.getRequestURI().getPath().equals("/callback")
-                        && state.equals(query.get("state"))) {
-                    if (query.containsKey("error")) {
-                        code.completeExceptionally(new AuthFailure(AuthFailure.Kind.LOGIN, "Microsoft sign-in was cancelled or denied."));
-                    } else if (query.containsKey("code") && !query.get("code").isBlank()) {
-                        code.complete(query.get("code"));
-                        status = 200;
-                        message = "Sign-in received. Return to Minecraft to check the account.";
-                    }
+                if (exchange.getRequestMethod().equals("GET")
+                        && exchange.getRequestURI().getRawPath().equals("/callback")
+                        && submit(redirect() + "?" + exchange.getRequestURI().getRawQuery())) {
+                    status = 200;
+                    message = "Sign-in received. Return to Minecraft or Discord to check the account.";
                 }
             } catch (IllegalArgumentException ignored) { /* Malformed requests cannot consume a pending login. */ }
             byte[] body = message.getBytes(StandardCharsets.UTF_8);
@@ -46,13 +52,34 @@ final class OAuthCallback implements AutoCloseable {
 
     URI authorizeUri() {
         return URI.create(MicrosoftAuthClient.AUTHORIZE + "?" + MicrosoftAuthClient.form(Map.of(
-                "client_id", MicrosoftAuthClient.CLIENT_ID, "response_type", "code", "redirect_uri", redirect(),
+                "client_id", clientId, "response_type", "code", "redirect_uri", redirect(),
                 "scope", "XboxLive.signin offline_access", "state", state, "prompt", "select_account",
                 "code_challenge", challenge(verifier), "code_challenge_method", "S256")));
     }
 
+    @Override public BrowserPrompt prompt() {
+        return code.isDone() || expired() ? null : new BrowserPrompt(authorizeUri().toString(), expiresAt);
+    }
+
+    private boolean expired() { return clock.getAsLong() - started >= 300_000_000_000L; }
+
+    @Override public boolean submit(String address) {
+        if (address == null || address.length() > 4000 || expired() || code.isDone()) return false;
+        try {
+            URI uri = URI.create(address.strip());
+            if (uri.getRawFragment() != null || uri.getRawQuery() == null
+                    || !address.strip().substring(0, address.strip().indexOf('?')).equals(redirect())) return false;
+            Map<String, String> query = parseQuery(uri.getRawQuery());
+            if (!state.equals(query.get("state")) || query.containsKey("code") == query.containsKey("error")) return false;
+            if (query.containsKey("error")) return code.completeExceptionally(
+                    new AuthFailure(AuthFailure.Kind.LOGIN, "Microsoft sign-in was cancelled or denied."));
+            String value = query.get("code");
+            return value != null && !value.isBlank() && code.complete(value);
+        } catch (IllegalArgumentException e) { return false; }
+    }
+
     String awaitCode() throws AuthFailure, InterruptedException {
-        try { return code.get(5, TimeUnit.MINUTES); }
+        try { return code.get(Math.max(0, 300_000_000_000L - (clock.getAsLong() - started)), TimeUnit.NANOSECONDS); }
         catch (TimeoutException e) { throw new AuthFailure(AuthFailure.Kind.LOGIN, "Sign-in timed out. Try pairing again."); }
         catch (ExecutionException e) { throw new AuthFailure(AuthFailure.Kind.LOGIN, "Microsoft sign-in was cancelled or denied."); }
     }

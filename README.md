@@ -121,15 +121,15 @@ See the [authentication scenarios](docs/authentication-scenarios.md) for test co
 
 ## Sign in remotely from your phone
 
-Version **1.3.0** adds a shared Discord companion for instances on one Linux PC. When silent renewal needs your help, it sends a private DM identifying the instance and account. Tap **Sign in** to generate a fresh Microsoft device code, finish sign-in on your phone, and the instance reconnects automatically after verifying the account.
+A shared Discord companion supports instances on one Linux PC. When silent renewal needs your help, it sends a private DM identifying the instance and account. Version **1.3.2** uses Microsoft’s account picker with PKCE, like Auth Me’s desktop flow. Tap **Sign in**, open **Choose Microsoft account**, and select the correct account. On your phone, copy the final localhost callback address—even if the page cannot connect—and submit it promptly using **Paste callback** in the DM. After verifying the Minecraft UUID, the instance reconnects automatically.
 
 Download `SocialXPFarm-remote-login.zip` alongside the mod from the [latest release](https://github.com/mcneds/SocialXPFarm/releases/tag/latest-build). Follow the [companion setup guide](remote-login/README.md) to create a bot, enter credentials locally, and register your instance directories. Only your configured Discord user can use the controls. No VPN or public incoming ports are required. Remote mode stays off until configured.
 
 Use Discord DMs for `/sxp status`, `/sxp login instance`, and `/sxp cancel instance`. With **1.3.1+** and the matching companion, use **`/sxp test instance`** to start a real phone sign-in test remotely while the instance is connected to Hypixel. The test saves verified renewal credentials and keeps the current connection; it does not exercise disconnect/reconnect recovery. These are separate from in-game commands. Remote sign-in does not switch healthy instances between accounts or enable automation remotely. Existing local login and silent refresh remain available.
 
-The Microsoft device endpoint and initial polling were checked with the default OAuth registration; full phone authentication and Discord delivery still require live validation with your accounts. See the [developer test guide](remote-login/DEVELOPMENT.md) for the automated suites and live acceptance checklist.
+The callback form carries a short-lived authorization code through Discord; reusable tokens and the PKCE verifier stay on the Minecraft instance. Full phone authentication and recovery still require live validation with your accounts. See the [developer test guide](remote-login/DEVELOPMENT.md) for the automated suites and live acceptance checklist.
 
-Use **`/sxp email instance address`** in the owner-only bot DM to set the Microsoft email reminder displayed for each instance. Sign-in messages explain how to choose another account or use a fresh Private/Incognito browser session when Microsoft selects a cached account. Email hints do not replace Minecraft UUID verification.
+Use **`/sxp email instance address`** in the owner-only bot DM to set the Microsoft email reminder displayed for each instance. Sign-in messages show this email beside the Minecraft username and link to Microsoft’s account picker. Email hints do not replace Minecraft UUID verification.
 
 ## Recovery verification
 
