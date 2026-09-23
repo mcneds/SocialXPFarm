@@ -24,6 +24,9 @@ Press **F8** to toggle all automation. Rebind it under **Options → Controls �
 | `/sxp off` | Disable all automation, including commands, menu clicks, reconnects, and Auth Me handoffs. |
 | `/sxp mode own` | Recover to your own island using `/is`. |
 | `/sxp mode guest` | Recover to the configured player/profile using `/visit`. |
+| `/sxp auth` | Show whether this instance has a saved login for its current account. |
+| `/sxp auth login` | Pair this instance's Microsoft account once for automatic session renewal. Requires Auth Me. |
+| `/sxp auth forget` | Remove this instance's saved login and cancel pending renewal. |
 
 **Enabled state and destination are separate settings.** Switching off cancels pending recovery and leaves you where you are; it does not send you home or disconnect you. Changing the destination preserves the enabled state. For example, `/sxp mode own` followed by `/sxp on` enables own-island recovery. Both settings save immediately and survive a restart. Your configured guest destination is retained when switching modes.
 
@@ -41,7 +44,7 @@ Guest mode treats the `SKYBLOCK GUEST` sidebar as healthy; the island owner does
 | Commands sent too quickly | Pause recovery commands for 20 seconds after a recognized throttle notice. |
 | Server full, login throttling, or stale “already connected” state | Wait at least 60 seconds before reconnecting. |
 | Visit menu or island transfer fails | Close the stale menu and retry, backing off from 5 to 60 seconds. |
-| Invalid or expired session | Open optional Auth Me and wait for a renewed online session. |
+| Invalid or expired session | Automatically renew the paired account, install the new session through Auth Me, and reconnect. Initial pairing or revoked consent needs browser sign-in. |
 | Recurring protocol error | Allow three automatic retries, then pause for investigation. |
 | Ban, account restriction, incompatible version, or another device logs in | Pause until the underlying issue is resolved. |
 
@@ -49,7 +52,7 @@ Reconnect delays include up to 20% random variation within the configured cap. T
 
 ## Limits
 
-- Auth Me may require browser interaction; authentication and consent screens stay open until you handle them.
+- Automatic authentication requires one initial sign-in per instance. Revoked/expired refresh credentials or Microsoft security requirements can require another sign-in.
 - Queue and custom disconnect messages are detected heuristically. New wording may need an update.
 - `SKYBLOCK GUEST` alone does not verify the island owner/profile or prove that the server is progressing. The current visit-menu logic can fall back to the only visitable profile head.
 - This mod cannot restart a crashed JVM, wake a sleeping computer, or fix an unavailable server or destination restrictions.
@@ -97,17 +100,28 @@ All timing settings use ticks as units; 20 ticks is approximately one second. Re
 
 Existing configs use defaults for omitted settings. Set `autoReconnect` to `false` to disable reconnecting and the Auth Me handoff while retaining in-server recovery. In-game control changes apply immediately; restart the client after editing the JSON file manually.
 
-## Stale sessions (optional Auth Me integration)
+## Automatic login for each alt
 
 Install [Auth Me for Fabric 26.2](https://www.curseforge.com/minecraft/mc-mods/auth-me) and its required dependencies alongside this mod. The integration targets [Auth Me 9.3.0+26.2](https://github.com/axieum/authme/tree/v9.3.0%2B26.2); Auth Me is optional and is not bundled.
 
-When a session is rejected, choose Microsoft on the Auth Me screen and complete its browser login. SocialXPFarm waits until Auth Me returns to the disconnect screen with a changed online session for the **same Minecraft account**, then reconnects automatically. Auth Me does not silently refresh credentials; the **Pick a login method** screen waits for your input. Cancelling authentication leaves reconnects paused, and an offline login does not resume them. Without Auth Me, restart Minecraft to renew the session and reconnect manually.
+Set this up **once per Minecraft instance**:
 
-For alts with different Microsoft accounts, hold **Left Ctrl while clicking Microsoft's icon** in Auth Me 9.3.0+26.2 to request browser account selection. Choose the account belonging to that instance. If the browser signs into your main account or another alt, automatic reconnect stays paused; use **Re-Login** and choose the correct account. The mod checks Minecraft UUIDs and does not store Microsoft login credentials. See the [authentication scenarios](docs/authentication-scenarios.md) for automated coverage and a two-instance browser test.
+1. Launch the instance with its intended alt selected in your launcher and join a server.
+2. Run **`/sxp auth login`**. The browser opens directly to Microsoft account selection.
+3. Choose the Microsoft account that owns that alt and complete sign-in/consent. The Minecraft screen closes after it saves the verified account.
+4. Run **`/sxp auth`** to confirm pairing. Keep automation and `autoReconnect` enabled for recovery.
+
+After pairing, an expired-session disconnect triggers background renewal, followed by automatic reconnect and return to the selected island. No login-method clicks or browser sign-in are needed for normal renewals. Each instance uses its own saved refresh token and verifies the original Minecraft UUID before applying a session. Browser cookies for your main account or another alt do not affect silent renewal. Network/service failures retry every 60 seconds. Microsoft can revoke or expire refresh credentials or require interaction; those cases open pairing again. See [Microsoft's refresh-token guidance](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens).
+
+Pairing uses Auth Me's public Microsoft OAuth client registration with PKCE, then Auth Me's session API to rebuild Minecraft's user and profile-key services. An ordinary login through Auth Me's **Re-Login** button does **not** enroll automatic renewal; use `/sxp auth login`. If an unpaired instance first encounters a stale session, SocialXPFarm opens its pairing screen automatically. Without Auth Me, renew through the launcher and reconnect manually.
+
+The refresh token is a login credential, stored **unencrypted** in this instance's `config/socialxpfarm-auth/account.json`, outside the regular config, with owner-only filesystem permissions. No Microsoft password is stored. Keep that directory out of shared instance exports and backups accessible to others. `/sxp auth forget` deletes the local credential; it does not revoke Microsoft's consent. Turning automation off cancels pending recovery and keeps the saved account for later use.
+
+See the [authentication scenarios](docs/authentication-scenarios.md) for test coverage and the live two-alt checklist. Automated tests use synthetic credentials; real Microsoft/Hypixel renewal still needs live validation.
 
 ## Recovery verification
 
-`./gradlew build` runs regression tests for Hypixel address scoping, disconnect classification, queue/throttle notices, reconnect backoff, monotonic deadlines, and the authentication session gate (including cancellation, wrong-alt login, and delayed completion). Browser login and runtime Auth Me integration still require the [manual authentication checks](docs/authentication-scenarios.md).
+`./gradlew build` runs regression tests for Hypixel address scoping, disconnect classification, queue/throttle notices, reconnect backoff, monotonic deadlines, OAuth callbacks/PKCE, token rotation, per-instance storage, renewal retries/cancellation, and account identity. Browser login and runtime Auth Me integration still require the [manual authentication checks](docs/authentication-scenarios.md).
 
 In-game checks: toggle off during a pending visit and confirm no further automation; change destination while disabled and confirm it remains disabled; enable own mode in the Hub and confirm `/is` stops repeating after arrival; switch back to guest mode; enter limbo and confirm `/lobby` → `/play sb` → the configured island; disconnect from Hypixel unexpectedly and confirm delayed reconnection; use Disconnect or cancel a connection and confirm it stays disconnected; test an expired session with Auth Me, including cancelling and successfully completing login.
 

@@ -73,6 +73,10 @@ public final class SocialXPFarmClient implements ClientModInitializer {
                         .then(literal("toggle").executes(command -> setEnabled(command.getSource().getClient(), !config.enabled)))
                         .then(literal("on").executes(command -> setEnabled(command.getSource().getClient(), true)))
                         .then(literal("off").executes(command -> setEnabled(command.getSource().getClient(), false)))
+                        .then(literal("auth")
+                                .executes(command -> AutomaticLogin.status(command.getSource().getClient()))
+                                .then(literal("login").executes(command -> AutomaticLogin.setup(command.getSource().getClient())))
+                                .then(literal("forget").executes(command -> AutomaticLogin.forget(command.getSource().getClient()))))
                         .then(literal("mode")
                                 .then(literal("own").executes(command -> setDestination(command.getSource().getClient(), IslandDestination.OWN)))
                                 .then(literal("guest").executes(command -> setDestination(command.getSource().getClient(), IslandDestination.GUEST))))));
@@ -97,6 +101,12 @@ public final class SocialXPFarmClient implements ClientModInitializer {
 
         connectionRecovery.tick(client, config.enabled && config.autoReconnect, config.reconnectDelayTicks,
                 config.maxReconnectDelayTicks, config.connectTimeoutTicks);
+
+        if (client.gui.screen() instanceof AutomaticLoginScreen) {
+            resetState();
+            limboRecovery.clear();
+            return;
+        }
 
         if (ConnectionRecovery.isLoading(client.gui.screen())) {
             resetState();

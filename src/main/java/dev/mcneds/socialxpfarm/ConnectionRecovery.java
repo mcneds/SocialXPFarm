@@ -1,8 +1,10 @@
 package dev.mcneds.socialxpfarm;
 
 import dev.mcneds.socialxpfarm.mixin.DisconnectedScreenAccessor;
+import dev.mcneds.socialxpfarm.auth.SessionRefresh;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.User;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.DisconnectedScreen;
 import net.minecraft.client.gui.screens.Screen;
@@ -25,6 +27,10 @@ public final class ConnectionRecovery {
     private ServerData server;
     private DisconnectedScreen failureScreen;
     private final AuthenticationRecovery<Screen> authentication = new AuthenticationRecovery<>();
+    private SessionRefresh automaticLogin;
+    private User rejectedUser;
+    private boolean loginScreenShown;
+    private SessionRefresh.Status lastLoginStatus;
     private int attempts;
     private final RecoveryDeadline retry = new RecoveryDeadline();
     private final RecoveryDeadline loading = new RecoveryDeadline();
@@ -72,6 +78,7 @@ public final class ConnectionRecovery {
                 server = current;
                 failureScreen = null;
                 authentication.clear();
+                cancelAutomaticLogin();
             }
             return;
         }
@@ -99,15 +106,19 @@ public final class ConnectionRecovery {
             if (action == RecoveryPolicy.Action.AUTHENTICATE) {
                 retry.clear();
                 LOGGER.warn("Session rejected; waiting for reauthentication before reconnecting.");
-                authentication.begin(disconnected, client.getUser(), () -> openAuthMe(client, disconnected));
+                authentication.begin(disconnected, client.getUser(), () -> beginLogin(client, disconnected));
                 return;
             }
             authentication.clear();
+            cancelAutomaticLogin();
             int minimum = action == RecoveryPolicy.Action.COOLDOWN ? Math.max(1200, initialDelay) : initialDelay;
             schedule(minimum, Math.max(minimum, maximumDelay));
         }
 
         if (paused) return;
+
+        tickLogin(client, disconnected);
+        if (paused || client.gui.screen() != disconnected) return;
 
         AuthenticationRecovery.Result auth = authentication.poll(screen, client.getUser());
         if (auth == AuthenticationRecovery.Result.WRONG_ACCOUNT) {
@@ -141,6 +152,52 @@ public final class ConnectionRecovery {
 
     static boolean isSessionFailure(Component reason) {
         return RecoveryPolicy.classify(reason) == RecoveryPolicy.Action.AUTHENTICATE;
+    }
+
+    private void beginLogin(Minecraft client, DisconnectedScreen parent) {
+        cancelAutomaticLogin();
+        if (!AutomaticLogin.available()) {
+            openAuthMe(client, parent);
+            return;
+        }
+        rejectedUser = client.getUser();
+        automaticLogin = AutomaticLogin.create();
+        automaticLogin.start(rejectedUser);
+        tickLogin(client, parent);
+    }
+
+    private void tickLogin(Minecraft client, DisconnectedScreen parent) {
+        if (automaticLogin == null) return;
+        // A manual Auth Me login takes precedence over an older background operation.
+        if (client.getUser() != rejectedUser) {
+            cancelAutomaticLogin();
+            return;
+        }
+        automaticLogin.tick();
+        SessionRefresh.Status status = automaticLogin.status();
+        if (status != lastLoginStatus) {
+            lastLoginStatus = status;
+            LOGGER.info("Automatic login: {}", automaticLogin.message());
+        }
+        if (status == SessionRefresh.Status.READY) {
+            if (!AutomaticLogin.apply(automaticLogin.result())) {
+                paused = true;
+                LOGGER.warn("Could not install the renewed session. Check the Auth Me version and restart this instance.");
+            }
+            cancelAutomaticLogin();
+        } else if ((status == SessionRefresh.Status.NEEDS_LOGIN || status == SessionRefresh.Status.FAILED) && !loginScreenShown) {
+            loginScreenShown = true;
+            client.setScreenAndShow(new AutomaticLoginScreen(parent, automaticLogin, rejectedUser,
+                    status == SessionRefresh.Status.NEEDS_LOGIN));
+        }
+    }
+
+    private void cancelAutomaticLogin() {
+        if (automaticLogin != null) automaticLogin.cancel();
+        automaticLogin = null;
+        rejectedUser = null;
+        loginScreenShown = false;
+        lastLoginStatus = null;
     }
 
     private static void openAuthMe(Minecraft client, Screen parent) {
@@ -187,6 +244,7 @@ public final class ConnectionRecovery {
         server = null;
         failureScreen = null;
         authentication.clear();
+        cancelAutomaticLogin();
         attempts = 0;
         retry.clear();
         loading.clear();

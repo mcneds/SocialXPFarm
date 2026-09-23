@@ -1,55 +1,56 @@
-# Authentication recovery scenarios
+# Automatic authentication scenarios
 
-The **Pick a login method** screen is an expected pause: SocialXPFarm opened Auth Me after a rejected session. It does not select Microsoft or complete browser authentication automatically. Leaving this screen open does not trigger a reconnect timeout.
+Version 1.2.0 adds saved per-instance Microsoft renewal. Auth Me 9.3.0+26.2 supplies the session installation API. SocialXPFarm performs its own initial OAuth authorization-code flow with PKCE, stores the refresh token, and subsequently exchanges it for Microsoft → Xbox → XSTS → Minecraft credentials. No launcher account files are read.
 
-## Multiple Microsoft accounts
+## Setup and expected behavior
 
-Each running instance remembers the Minecraft account UUID whose session was rejected. Recovery requires a different, nonblank online token for **that same UUID**, followed by a return to the original disconnect screen. A changed display name is allowed. A different Minecraft account leaves automatic reconnect paused and logs the expected username once. This checks account identity, not whether the token will be accepted by the server.
+Launch each instance with its intended Minecraft account, join a server, and run `/sxp auth login` once. Select that alt's Microsoft account in the browser and complete consent. `/sxp auth` confirms pairing. Each instance stores only its own account under `config/socialxpfarm-auth/account.json`, protected with owner-only permissions. The file contains an unencrypted refresh credential: exclude it when sharing an instance. `/sxp auth forget` removes it locally.
 
-In Auth Me **9.3.0+26.2**, hold **Left Ctrl while clicking the Microsoft icon** to request account selection in the browser. Choose the Microsoft account that owns the alt for that instance. Ordinary clicking can reuse the browser's current account. See the pinned [Auth Me method-selection implementation](https://github.com/axieum/authme/blob/v9.3.0%2B26.2/common/src/main/java/me/axieum/mcmod/authme/api/gui/screen/AuthMethodScreen.java).
+Subsequent invalid-session disconnects renew silently. The renewed Minecraft UUID must match the rejected session's UUID. The saved refresh token is rotated before downstream calls, so a later Xbox/Minecraft outage does not discard Microsoft's replacement. Renewal runs off the client thread; temporary network failures, HTTP 408/429, and server errors wait 60 seconds before retrying. Only one request chain runs at a time for that recovery.
 
-If you choose the wrong account, use Auth Me's **Re-Login** button on the disconnect screen and repeat with the correct account. SocialXPFarm does not restore the previous client session, store Microsoft credentials, or remember a Microsoft email per instance. The identity check applies to automatic recovery; a manual connection is still your choice.
+Microsoft can expire/revoke refresh credentials or require interaction. These cases open the pairing screen once; cancellation does not reopen a browser every tick. Initial pairing forces account selection, uses a random loopback port per login, and validates OAuth state and PKCE. An ordinary Auth Me Re-Login remains available but does not save a refresh token for this feature.
 
-## Automated regression scenarios
+Disabling recovery, leaving the failure screen for the server list/title, or choosing another server cancels automatic renewal. Late completion cannot install a session or write credentials after cancellation. Session installation occurs on the Minecraft client thread, only while the original disconnect screen is active and its rejected user has not been manually replaced. Saved pairing survives an ordinary restart and the automation toggle.
 
-Run:
+## Automated tests
+
+Run `./gradlew build`, or target the new flow with:
 
 ```bash
-./gradlew test --tests '*AuthenticationRecoveryTest'
+./gradlew test --tests '*auth.*' --tests '*AuthenticationRecoveryTest'
 ```
 
-These tests exercise the production `AuthenticationRecovery` gate using synthetic Minecraft users and screen identity markers. They do not contact Microsoft or Hypixel, launch a browser, load Auth Me, or test Fabric screen hooks. The wider `./gradlew build` suite also covers disconnect classification and reconnect deadlines.
-
-| Scenario | Expected result |
+| Area | Covered cases |
 |---|---|
-| Invalid-session reason | Classified as an authentication failure. |
-| Repeated processing of the same failure; chooser stays open | One login handoff; gate stays closed. |
-| Auth Me installs a fresh session before its screen closes | Wait until it returns to the original disconnect screen. |
-| Browser failure/cancel → chooser → Back | Stay paused with the rejected session; allow a later manual login to complete recovery. |
-| Replacement user with the same token, blank token, or `invalidtoken` | Stay paused. |
-| Fresh online token for the original alt | Report ready once so the controller can schedule a reconnect. |
-| Browser authenticates another alt or the main account | Stay paused; report wrong account once. |
-| Same name with another UUID; changed name with original UUID | Reject the former; accept the latter. |
-| Two independent recovery gates for different alts | Each accepts only its own account. |
-| Login adapter returns without opening a screen | Stay paused; a later manual session renewal can still complete recovery. |
-| Recovery state cleared while login is pending | Late authentication completion does not revive that recovery state. |
-| Later session expires again | A new authentication cycle can start. |
+| OAuth callback | Wrong/duplicate state, rejected consent, independent simultaneous ports/state/verifiers, account-selection and offline-access scopes, standard PKCE test vector. |
+| Token exchange | Full silent exchange chain, one-time code exchange with PKCE and exact redirect URI, rotation before downstream outage, retained token if replacement omitted, wrong Minecraft UUID, revoked consent, transient HTTP errors, malformed responses, network failures. |
+| Storage | Persistence across new store instances, rotation without leftover temporary files, owner-only POSIX permissions, separate alt directories/UUIDs, deletion, malformed content, symbolic-link rejection, redacted diagnostics. |
+| Renewal worker | One in-flight operation, no browser for a saved account, missing/mismatched account needs pairing, 60-second retry using the rotated token, revoked credentials do not loop, cancelled late work cannot save/deliver, wrong account cannot be delivered. |
+| Existing session gate | Original screen identity, manual auth cancellation, unchanged/blank/offline tokens, wrong alt, successful login, reset, and another authentication cycle. |
 
-## Manual two-instance browser test
+The callback tests use actual local HTTP listeners and synthetic responses. Token exchanges use an injected HTTP transport. **No test signs into Microsoft, contacts Hypixel, or validates runtime Auth Me mixins/session installation.**
 
-Status: **not yet executed against live Microsoft/Hypixel services**. Use two launcher instances with different owned Minecraft accounts, labelled **A** and **B**. Record the expected Minecraft username for each. Install only one SocialXPFarm jar per instance, along with Auth Me 9.3.0+26.2 and its dependencies. Enable automation and auto-reconnect; configure a guest destination or choose own-island mode.
+## Live two-alt acceptance test
 
-Start the recovery cases below when an instance encounters a real invalid/expired-session disconnect. A generic network kick is not an authentication trigger. Do not rely on a fixed session-expiry duration. The automated suite supplies a deterministic trigger without waiting for real expiry.
+Status: **not yet run**. Use separate launcher directories for owned accounts A and B, only one SocialXPFarm jar per instance, and Auth Me 9.3.0+26.2 with its dependencies. Enable automation and `autoReconnect`, and configure guest recovery or select own-island mode.
 
-1. **Reproduce the screenshot:** leave A at **Pick a login method** for at least 30 minutes. Expect no extra browser windows or reconnect attempts. The screen should remain available for input.
-2. **Cancel:** choose Microsoft, cancel/back out, and then return from the chooser to the disconnect screen. Expect no reconnect with the unchanged session. Use Re-Login to try again.
-3. **Correct account:** hold Left Ctrl while clicking Microsoft; choose A's Microsoft account and finish the browser flow. Expect Auth Me to return to the disconnect screen, then a delayed reconnect and recovery to the configured destination.
-4. **Shared browser account:** leave the browser signed into A. When B needs authentication, deliberately complete login as A. Expect B to stay disconnected and its log to say it needs B's username. This deliberately changes B's client session to A; correct it in the next step.
-5. **Correct the mismatch:** in B, use Re-Login, then Left Ctrl + Microsoft and select B's account. Expect B to reconnect as B. A should remain connected; there should be no mutual duplicate-login kicks caused by automatic recovery.
-6. **Independent pending logins:** when both instances need renewal, complete their browser flows one at a time, checking the instance and account each time. Completing A must not release B's pending recovery.
-7. **Offline login:** during another pending recovery, select Auth Me's offline option. Expect recovery to remain paused. Renew the original online account to resume.
-8. **Unavailable/failed login:** exercise a browser authentication failure and, separately, an instance without Auth Me installed. Expect no reconnect loop using rejected credentials. Without Auth Me, restart from the launcher to renew the session and reconnect manually.
-9. **Manual departure and disabled automation:** return to the server list while recovery is paused; expect no automatic return. Separately, disable automation before the disconnect; expect no Auth Me handoff or reconnect. Re-enable and connect manually to start a fresh recovery context.
-10. **Service outage:** an authentication-service-unavailable disconnect should follow ordinary retry/backoff, without opening Auth Me. This is also covered by the reason-classification tests.
+1. **Pair A:** launch as A, run `/sxp auth login`, and finish sign-in as A. Expect a success message and `/sxp auth` to report pairing.
+2. **Wrong account during B setup:** launch as B and run the same command. Intentionally select A in the browser. Expect the setup screen to reject the account, B's client session to remain B, and no credential for A to be saved in B's instance. Click Sign in again and choose B; expect pairing to complete.
+3. **Restart:** restart both instances with their respective launcher accounts. `/sxp auth` should still report each as paired without another browser login.
+4. **Silent renewal:** when A encounters a genuine expired/invalid-session disconnect, expect a background renewal with no method-selection screen or browser window, then a reconnect as A and return to its configured destination. Repeat with B while the browser remains logged into A. A generic network kick does not trigger renewal; do not rely on a fixed session-expiry duration.
+5. **Concurrent recovery:** when both accounts need renewal, verify each reconnects as its own account without mutual duplicate-login kicks. Account names and UUIDs in logs should match their instances.
+6. **Network outage during renewal:** interrupt connectivity, then restore it. Expect retry waits of 60 seconds and eventual recovery without browser login. The automated test specifically covers a failure after refresh-token rotation.
+7. **Revoked consent:** revoke the test account's grant through Microsoft's account controls, then trigger renewal. Expect pairing to request interaction once. Cancel and leave it paused; verify that browser windows do not repeatedly open. Complete pairing again to restore automatic renewal.
+8. **Cancel/disable:** leave a pending recovery for the server list, or disable automation before a failure. Expect no automatic session installation/reconnect. In a running instance, `/sxp auth forget` removes the saved account; `/sxp auth` should then require pairing.
+9. **Missing/incompatible Auth Me:** expect a clear setup message or logged installation failure, with recovery paused. Install the supported version and restart.
 
-Check each instance's `logs/latest.log` for `Disconnect classified as AUTHENTICATE`, `Session rejected`, and—only after the correct login—`Session changed; resuming reconnect recovery` followed by `Reconnecting`. For a mismatch, expect `automatic reconnect remains paused`. Record the jar version, expected/actual Minecraft username, outcome, and elapsed recovery time; do not record access tokens or browser authorization codes.
+Inspect `logs/latest.log` for `Disconnect classified as AUTHENTICATE`, `Automatic login`, `Session changed; resuming reconnect recovery`, and `Reconnecting`. Record build version, expected/actual Minecraft username, result, and recovery time. Never include `account.json`, access/refresh tokens, or callback authorization codes in reports.
+
+## References and limits
+
+- [Microsoft refresh tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens): tokens can be rotated, expired, or revoked; fresh interaction may be required.
+- [Microsoft authorization-code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow): PKCE, OAuth state, offline access and refresh requests.
+- [Auth Me's pinned OAuth implementation](https://github.com/axieum/authme/blob/v9.3.0%2B26.2/common/src/main/java/me/axieum/mcmod/authme/api/util/MicrosoftUtils.java): public client registration and Xbox/Minecraft exchange endpoints used by this integration.
+- [Auth Me's session installation](https://github.com/axieum/authme/blob/v9.3.0%2B26.2/common/src/main/java/me/axieum/mcmod/authme/api/util/SessionUtils.java): recreates the Minecraft session services, including profile keys.
+
+The OAuth registration is owned by Auth Me; changes to that registration or Microsoft's Xbox/Minecraft access rules may require an update. Token files are filesystem-protected, not encrypted by an OS keychain. Independent instances need separate game directories. Pairing does not replace launcher authentication, automatically choose a launcher account on startup, or restart a crashed client.
