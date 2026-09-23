@@ -36,6 +36,26 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
             await self.notifier.reconcile()
         self.assertEqual([], self.discord.sent)
 
+    async def test_remote_test_from_idle_produces_one_request_and_updates_to_paired(self):
+        publish(self.registry, value=snapshot('idle', canTest=True))
+        await self.notifier.reconcile()
+        self.assertEqual([], self.discord.sent)
+        command = self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'test')
+        context = str(uuid.uuid4())
+        publish(self.registry, value=snapshot(context=context), ack=command['id'])
+        await self.notifier.reconcile()
+        self.assertEqual(1, len(self.discord.sent))
+        self.registry.command(OWNER, INSTANCE_A, context, 'login')
+        prompt = {'userCode': 'TEST-CODE', 'verificationUri': 'https://microsoft.com/devicelogin', 'expiresAt': 900000}
+        context = str(uuid.uuid4())
+        publish(self.registry, value=snapshot('signing_in', context=context, prompt=prompt))
+        await self.notifier.reconcile()
+        self.assertEqual(prompt, self.discord.edits[-1][3])
+        publish(self.registry, value=snapshot('paired', context=context, canTest=True))
+        await self.notifier.reconcile()
+        self.assertEqual(1, len(self.discord.sent))
+        self.assertIsNone(self.discord.edits[-1][3])
+
     async def test_two_alts_alert_independently(self):
         publish(self.registry)
         publish(self.registry, INSTANCE_B, snapshot(context=str(uuid.uuid4()), username='AltB', accountId=INSTANCE_B))

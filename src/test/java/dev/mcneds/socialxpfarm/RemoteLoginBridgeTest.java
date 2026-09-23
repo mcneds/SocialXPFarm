@@ -27,7 +27,7 @@ class RemoteLoginBridgeTest {
         assertFalse(RemoteLoginBridge.permitted(state("needs_login", false), command("login"), 1000));
     }
 
-    @ParameterizedTest @ValueSource(strings = {"disabled", "idle", "renewing", "restored", "failed", "signed_in", "signing_in"})
+    @ParameterizedTest @ValueSource(strings = {"disabled", "idle", "renewing", "restored", "failed", "signed_in", "signing_in", "paired"})
     void otherStatesCannotStartAnotherGrantEvenWithOldEnabledFlag(String phase) {
         assertFalse(RemoteLoginBridge.permitted(state(phase, true), command("login"), 1000));
     }
@@ -36,6 +36,18 @@ class RemoteLoginBridgeTest {
         assertTrue(RemoteLoginBridge.permitted(state("signing_in", false), command("cancel"), 1000));
         assertFalse(RemoteLoginBridge.permitted(state("renewing", false), command("cancel"), 1000));
         assertFalse(RemoteLoginBridge.permitted(state("disabled", false), command("cancel"), 1000));
+    }
+
+    @Test void remoteTestRequiresExplicitCapabilityAndSafeLifecycle() {
+        for (String phase : new String[]{"idle", "restored", "signed_in", "paired", "disabled", "needs_login", "signing_in", "failed", "cancelled"}) {
+            var base = state(phase, false);
+            assertFalse(RemoteLoginBridge.permitted(base, command("test"), 1000));
+            var capable = new RemoteLoginBridge.Snapshot(run, context, "Alt", base.accountId(), phase, "", false, null, true);
+            assertEquals(java.util.Set.of("idle", "restored", "signed_in", "paired", "failed").contains(phase),
+                    RemoteLoginBridge.permitted(capable, command("test"), 1000));
+            assertFalse(RemoteLoginBridge.permitted(capable,
+                    new RemoteLoginBridge.Command(UUID.randomUUID().toString(), run, UUID.randomUUID().toString(), "test", 61000), 1000));
+        }
     }
 
     @Test void staleProcessContextExpiryAndUnknownActionAreRejected() {

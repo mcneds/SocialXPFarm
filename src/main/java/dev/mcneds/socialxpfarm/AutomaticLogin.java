@@ -31,6 +31,7 @@ final class AutomaticLogin {
     }
 
     static int setup(Minecraft client) {
+        RemoteLoginBridge.INSTANCE.cancelTest();
         if (!available()) {
             feedback(client, "Install Auth Me 9.3.0+26.2 to enable automatic session renewal.");
             return 0;
@@ -50,6 +51,7 @@ final class AutomaticLogin {
     }
 
     static int forget(Minecraft client) {
+        RemoteLoginBridge.INSTANCE.cancelTest();
         ConnectionRecovery.INSTANCE.reset();
         try {
             STORE.forget();

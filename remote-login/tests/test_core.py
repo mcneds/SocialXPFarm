@@ -66,6 +66,41 @@ class ProtocolTests(unittest.TestCase):
         publish(self.registry, value=snapshot('signing_in'))
         self.assertEqual('cancel', self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'cancel')['action'])
 
+    def test_remote_test_requires_capability_and_is_idempotent_and_instance_scoped(self):
+        publish(self.registry, value=snapshot('idle', canTest=True))
+        first = self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'test')
+        self.assertEqual('test', first['action'])
+        self.assertEqual(first, self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'test'))
+        self.assertIsNone(self.registry.instances[INSTANCE_B].command)
+        with self.assertRaises(PermissionError):
+            self.registry.command(OWNER+1, INSTANCE_A, CONTEXT_A, 'test')
+        with self.assertRaisesRegex(ValueError, 'stale'):
+            self.registry.command(OWNER, INSTANCE_A, str(uuid.uuid4()), 'test')
+        publish(self.registry, value=snapshot('needs_login', context=str(uuid.uuid4())))
+        self.assertIsNone(self.instance.command)
+
+    def test_remote_test_rejects_old_mods_offline_and_active_or_disabled_states(self):
+        for changes in ({}, {'canTest': False}, {'canTest': True, 'state': 'signing_in'}, {'canTest': True, 'state': 'disabled'}):
+            value = snapshot('idle')
+            value.update(changes)
+            publish(self.registry, value=value)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'test')
+        publish(self.registry, value=snapshot('idle', canTest=True))
+        self.clock.advance(46)
+        with self.assertRaisesRegex(ValueError, 'offline'):
+            self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'test')
+
+    def test_completed_pairing_can_be_tested_again_but_cannot_start_normal_login(self):
+        publish(self.registry, value=snapshot('paired', canTest=True))
+        with self.assertRaises(ValueError):
+            self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'login')
+        self.assertEqual('test', self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'test')['action'])
+
+    def test_test_capability_must_be_boolean(self):
+        with self.assertRaises(ValueError):
+            validate_snapshot(snapshot(canTest='true'), RUN_A)
+
     def test_new_context_account_or_process_invalidates_queued_work(self):
         for change in ['context', 'accountId', 'runId']:
             with self.subTest(change=change):

@@ -44,6 +44,23 @@ async def main():
     await notifications.reconcile()
     assert not registry.online(registry.instances[INSTANCE_B])
     print('PASS: stale buttons and offline instances cannot initiate authentication')
+    context = str(uuid.uuid4())
+    publish(registry, value=snapshot('idle', context=context, canTest=True))
+    command = registry.command(OWNER, INSTANCE_A, context, 'test')
+    assert command['action'] == 'test'
+    assert registry.instances[INSTANCE_B].command is None
+    context = str(uuid.uuid4())
+    publish(registry, value=snapshot(context=context), ack=command['id'])
+    await notifications.reconcile()
+    registry.command(OWNER, INSTANCE_A, context, 'login')
+    context = str(uuid.uuid4())
+    publish(registry, value=snapshot('signing_in', context=context, prompt=prompt))
+    await notifications.reconcile()
+    publish(registry, value=snapshot('paired', context=context, canTest=True))
+    await notifications.reconcile()
+    assert delivery.edits[-1][3] is None
+    assert registry.instances[INSTANCE_A].snapshot['state'] == 'paired'
+    print('PASS: Discord test starts from idle and finishes paired without claiming reconnection')
     print('Developer scenarios complete. No real sign-ins or messages were sent.')
 
 

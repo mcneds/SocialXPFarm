@@ -10,8 +10,8 @@ import uuid
 
 from .config import private_write
 
-STATES = {'idle', 'disabled', 'renewing', 'needs_login', 'signing_in', 'signed_in', 'restored', 'cancelled', 'failed'}
-SNAPSHOT_KEYS = {'runId', 'context', 'username', 'accountId', 'state', 'message', 'canLogin', 'prompt'}
+STATES = {'idle', 'disabled', 'renewing', 'needs_login', 'signing_in', 'signed_in', 'restored', 'cancelled', 'failed', 'paired'}
+SNAPSHOT_KEYS = {'runId', 'context', 'username', 'accountId', 'state', 'message', 'canLogin', 'prompt', 'canTest'}
 
 
 def identifier(value):
@@ -35,6 +35,8 @@ def validate_snapshot(value, run_id):
     identifier(value.get('accountId'))
     if type(value.get('canLogin')) is not bool or not isinstance(value.get('message'), str) or len(value['message']) > 512:
         raise ValueError('Invalid status')
+    if 'canTest' in value and type(value['canTest']) is not bool:
+        raise ValueError('Invalid test capability')
     prompt = value.get('prompt')
     if prompt is not None:
         if not isinstance(prompt, dict) or set(prompt) != {'userCode', 'verificationUri', 'expiresAt'}:
@@ -111,13 +113,18 @@ class Registry:
         if not instance or not self.online(instance):
             raise ValueError('Instance is offline; check its PC')
         snapshot = instance.snapshot
+        if action == 'test' and not snapshot.get('canTest', False):
+            raise ValueError('Phone test unavailable. Use mod 1.3.1+, enable remote recovery with Auth Me, and keep the instance connected to Hypixel without another login in progress.')
         if not context and not snapshot['context']:
-            raise ValueError('No authentication recovery is pending. Remote sign-in becomes available when this instance requires Microsoft sign-in.')
+            raise ValueError('No authentication recovery is pending. Use /sxp test to test phone sign-in remotely (mod 1.3.1+).')
         if not context or context != snapshot['context']:
             raise ValueError('This button is stale; use /sxp status for the current request')
-        if action == 'login':
+        if action == 'test':
+            if snapshot['state'] not in {'idle', 'restored', 'signed_in', 'paired', 'failed'}:
+                raise ValueError('Finish or close the current sign-in request before starting a phone test')
+        elif action == 'login':
             if not snapshot['canLogin'] or snapshot['state'] not in {'needs_login', 'cancelled'}:
-                raise ValueError('This instance is not waiting for sign-in')
+                raise ValueError('This instance is not waiting for sign-in. Use /sxp test for a remote phone test.')
         elif action == 'cancel':
             if snapshot['state'] != 'signing_in':
                 raise ValueError('There is no phone sign-in to cancel')

@@ -6,6 +6,7 @@
   "state": "signing_in",
   "message": "Waiting for Microsoft sign-in from your phone.",
   "canLogin": false,
+  "canTest": false,
   "prompt": {
     "userCode": "TEST-CODE",
     "verificationUri": "https://microsoft.com/devicelogin",

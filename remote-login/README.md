@@ -6,7 +6,7 @@ Normal refresh-token renewal stays automatic. The companion receives only status
 
 ## Install
 
-Use SocialXPFarm **1.3.0 or newer**, Auth Me **9.3.0+26.2**, and Python **3.12–3.14**. Keep only one enabled mod jar per instance and restart when updating.
+Use SocialXPFarm **1.3.1 or newer**, Auth Me **9.3.0+26.2**, and Python **3.12–3.14**. Keep only one enabled mod jar per instance and restart when updating. Update the companion alongside the mod.
 
 Download and extract `SocialXPFarm-remote-login.zip` from the same release as the mod, or use this directory from the repository. In this directory:
 
@@ -55,9 +55,19 @@ The default local endpoint is `127.0.0.1:38471`. If it is occupied, stop the con
 - The DM updates to **Signed in; reconnecting**, then **Destination restored** when the existing island check succeeds.
 - Use **Cancel** or **`/sxp cancel instance`** to cancel an active phone login. Codes that expire or are declined require another deliberate click; the bot does not keep generating codes while you are busy.
 
-Remote sign-in is available only for a current pending authentication recovery. It does not change accounts in a healthy connected instance or enable disabled automation. `/sxp auth login` inside Minecraft still provides desktop setup. With remote mode configured, rejected sessions wait for your Discord action instead of launching the PC browser automatically.
+`/sxp login` handles a current pending authentication request. It does not change accounts in a healthy connected instance or enable disabled automation. `/sxp auth login` inside Minecraft still provides desktop setup. With remote mode configured, rejected sessions wait for your Discord action instead of launching the PC browser automatically.
 
-`idle` in `/sxp status` means the instance is reporting and has no pending authentication recovery; it does not confirm island arrival or XP farming. Using `/sxp login` then reports “No authentication recovery is pending.” It cannot force a phone sign-in while idle. A “stale” button instead belongs to an authentication request that is no longer current.
+`idle` in `/sxp status` means the instance is reporting and has no pending authentication recovery; it does not confirm island arrival or XP farming. Using `/sxp login` then points you to `/sxp test`. A “stale” button instead belongs to an authentication request that is no longer current.
+
+### Test sign-in entirely from Discord
+
+1. Update both the companion and the mod to the same release, restart the companion service, and restart each updated Minecraft instance. Old mods cannot accept this test command.
+2. Keep the selected instance connected to Hypixel with automation, its destination, `autoReconnect`, Auth Me, and remote integration enabled. `/sxp status` should show **phone test available**.
+3. In the bot DM, run **`/sxp test`** and select the instance with autocomplete. No in-game command is needed.
+4. The bot sends a sign-in request. Tap **Sign in**, open Microsoft's link on your phone, enter the code, and select that alt's Microsoft account.
+5. Expect **Phone sign-in verified; automatic renewal saved** and status **paired**. You can run another test from Discord afterward.
+
+This is a real Microsoft → Xbox → Minecraft account check and saves that instance's refresh credential after its Minecraft UUID matches. It preserves the current game session and connection, so it does **not** test disconnect detection, Auth Me session installation, or reconnect/island recovery. Existing credentials are not removed to begin a test. Wrong-account, declined, or expired attempts can be retried with **Sign in**; **Cancel** stops active polling. Disabling automation, changing the active account, disconnecting, or forgetting credentials cancels the pending test. A companion restart preserves an active test in the still-running game instance and reconciles its status.
 
 F8 or `/sxp off` cancels automatic/remote recovery, suppresses new recovery alerts, and leaves status reporting available. Saved login credentials remain available for later use. `/sxp auth forget` removes the Minecraft refresh credential; disabling/removing remote integration is separate: set `enabled` to `false` in that instance's `remote.json` and restart it.
 

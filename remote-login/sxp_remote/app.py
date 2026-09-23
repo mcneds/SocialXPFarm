@@ -78,6 +78,7 @@ class Delivery:
             'needs_login': 'Microsoft sign-in is required. Tap Sign in when ready.',
             'signing_in': 'Preparing or checking your phone sign-in.',
             'signed_in': 'Signed in; reconnecting.',
+            'paired': 'Phone sign-in verified; automatic renewal saved. Your current game connection was kept.',
             'restored': 'Destination restored.',
             'cancelled': 'Phone sign-in cancelled. You may request a new code.',
             'failed': 'Authentication setup or session installation failed. Check the instance log; desktop sign-in remains available.'
@@ -130,7 +131,8 @@ class Bot(discord.Client):
             for instance in registry.instances.values():
                 state = instance.snapshot or {}
                 phase = state.get('state', 'offline') if registry.online(instance) else 'offline'
-                lines.append(f"**{discord.utils.escape_markdown(instance.label)}**: {phase} — `{instance.id}`")
+                test_ready = ' (phone test available)' if registry.online(instance) and state.get('canTest', False) else ''
+                lines.append(f"**{discord.utils.escape_markdown(instance.label)}**: {phase}{test_ready} — `{instance.id}`")
             await interaction.response.send_message('\n'.join(lines)[:1900] or 'No instances registered.', allowed_mentions=discord.AllowedMentions.none())
 
         @group.command(name='login', description='Start phone sign-in for an instance that needs it')
@@ -141,6 +143,10 @@ class Bot(discord.Client):
         async def cancel(interaction: discord.Interaction, instance: str):
             await self.named_action(interaction, instance, 'cancel')
 
+        @group.command(name='test', description='Test real phone sign-in while keeping the current game connection')
+        async def test(interaction: discord.Interaction, instance: str):
+            await self.named_action(interaction, instance, 'test')
+
         async def complete(interaction, current):
             if not authorized(registry, interaction):
                 return []
@@ -149,6 +155,7 @@ class Bot(discord.Client):
 
         login.autocomplete('instance')(complete)
         cancel.autocomplete('instance')(complete)
+        test.autocomplete('instance')(complete)
         self.tree.add_command(group)
         self.notification_task = None
 

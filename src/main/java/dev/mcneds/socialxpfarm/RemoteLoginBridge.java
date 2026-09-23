@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import dev.mcneds.socialxpfarm.auth.DevicePrompt;
 import dev.mcneds.socialxpfarm.auth.MicrosoftAuthClient;
+import dev.mcneds.socialxpfarm.auth.PhoneLoginSession;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import org.slf4j.LoggerFactory;
@@ -19,7 +20,12 @@ final class RemoteLoginBridge {
     static final RemoteLoginBridge INSTANCE = new RemoteLoginBridge();
     private static final Gson JSON = new Gson();
     record Snapshot(String runId, String context, String username, String accountId, String state,
-                    String message, boolean canLogin, DevicePrompt prompt) {}
+                    String message, boolean canLogin, DevicePrompt prompt, boolean canTest) {
+        Snapshot(String runId, String context, String username, String accountId, String state,
+                 String message, boolean canLogin, DevicePrompt prompt) {
+            this(runId, context, username, accountId, state, message, canLogin, prompt, false);
+        }
+    }
     record Command(String id, String runId, String context, String action, long expiresAt) {}
     record Config(boolean enabled, String instanceId, String secret, int port, String clientId) {
         Config {
@@ -37,6 +43,10 @@ final class RemoteLoginBridge {
     private volatile String acknowledged = "";
     private final AtomicReference<Command> commands = new AtomicReference<>();
     private String handled = "";
+    private net.minecraft.client.User testUser;
+    private String testContext = "";
+    private boolean testAvailable;
+    private PhoneLoginSession testSession;
 
     private RemoteLoginBridge() {}
 
@@ -58,14 +68,60 @@ final class RemoteLoginBridge {
 
     void tick(Minecraft client, boolean enabled) {
         ConnectionRecovery recovery = ConnectionRecovery.INSTANCE;
+        if (testSession != null) {
+            if (!enabled || client.getUser() != testSession.expected() || !connectedToHypixel(client)) cancelTest();
+            else testSession.tick(true, client.getUser());
+        }
         Command command = commands.getAndSet(null);
         if (command != null) {
-            if (!command.id().equals(handled) && permitted(recovery.remoteSnapshot(client, runId, enabled), command, System.currentTimeMillis()))
-                recovery.remoteCommand(client, command.context(), command.action());
+            Snapshot current = currentSnapshot(client, enabled);
+            if (!command.id().equals(handled) && permitted(current, command, System.currentTimeMillis())) {
+                if (command.action().equals("test")) {
+                    cancelTest();
+                    testSession = new PhoneLoginSession(AutomaticLogin.create(), client.getUser(), clientId());
+                }
+                else if (testSession != null) testSession.command(command.context(), command.action());
+                else recovery.remoteCommand(client, command.context(), command.action());
+            }
             handled = command.id();
             acknowledged = command.id();
         }
-        snapshot = recovery.remoteSnapshot(client, runId, enabled);
+        snapshot = currentSnapshot(client, enabled);
+    }
+
+    private Snapshot currentSnapshot(Minecraft client, boolean enabled) {
+        if (testSession != null) {
+            testAvailable = false;
+            return new Snapshot(runId, testSession.context(), testSession.expected().getName(), testSession.expected().getProfileId().toString(),
+                    testSession.state(), testSession.message(), testSession.canLogin(), testSession.prompt(),
+                    enabled && (testSession.state().equals("paired") || testSession.state().equals("failed"))
+                            && !(client.gui.screen() instanceof AutomaticLoginScreen));
+        }
+        Snapshot current = ConnectionRecovery.INSTANCE.remoteSnapshot(client, runId, enabled);
+        boolean available = enabled && enabled() && connectedToHypixel(client)
+                && !(client.gui.screen() instanceof AutomaticLoginScreen) && AutomaticLogin.available()
+                && testState(current.state());
+        if (available && (!testAvailable || testUser != client.getUser())) {
+            testContext = UUID.randomUUID().toString();
+            testUser = client.getUser();
+        }
+        testAvailable = available;
+        return available ? new Snapshot(runId, testContext, current.username(), current.accountId(),
+                current.state(), current.message(), false, null, true) : current;
+    }
+
+    static boolean testState(String state) {
+        return "idle".equals(state) || "restored".equals(state) || "signed_in".equals(state) || "paired".equals(state) || "failed".equals(state);
+    }
+
+    private static boolean connectedToHypixel(Minecraft client) {
+        return client.player != null && client.getConnection() != null && client.getCurrentServer() != null
+                && RecoveryPolicy.isHypixel(client.getCurrentServer().ip);
+    }
+
+    void cancelTest() {
+        if (testSession != null) testSession.close();
+        testSession = null;
     }
 
     private void exchangeLoop() {
@@ -113,7 +169,7 @@ final class RemoteLoginBridge {
         if (command == null || command.id() == null || command.runId() == null || command.context() == null) return false;
         try {
             UUID.fromString(command.id()); UUID.fromString(command.runId()); UUID.fromString(command.context());
-            return "login".equals(command.action()) || "cancel".equals(command.action());
+            return "login".equals(command.action()) || "cancel".equals(command.action()) || "test".equals(command.action());
         } catch (IllegalArgumentException e) { return false; }
     }
 
@@ -131,6 +187,7 @@ final class RemoteLoginBridge {
     static boolean permitted(Snapshot state, Command command, long now) {
         if (!valid(command) || !state.runId().equals(command.runId()) || !state.context().equals(command.context())
                 || command.expiresAt() <= now || command.expiresAt() - now > 65_000) return false;
+        if (command.action().equals("test")) return state.canTest() && testState(state.state());
         return command.action().equals("login")
                 ? state.canLogin() && (state.state().equals("needs_login") || state.state().equals("cancelled"))
                 : state.state().equals("signing_in");

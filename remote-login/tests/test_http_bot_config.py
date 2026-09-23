@@ -103,6 +103,25 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('stale', interaction.followup.send.call_args.args[0])
         self.assertIsNone(self.registry.instances[INSTANCE_A].command)
 
+    async def test_remote_test_slash_command_is_registered_and_routes_only_selected_instance(self):
+        self.assertIsNotNone(self.bot.tree.get_command('sxp').get_command('test'))
+        publish(self.registry, value=snapshot('idle', canTest=True))
+        denied = self.interaction(OWNER+1)
+        await self.bot.named_action(denied, INSTANCE_A, 'test')
+        self.assertIsNone(self.registry.instances[INSTANCE_A].command)
+        interaction = self.interaction()
+        await self.bot.named_action(interaction, INSTANCE_A, 'test')
+        interaction.response.defer.assert_awaited_once()
+        self.assertEqual('test', self.registry.instances[INSTANCE_A].command['action'])
+        self.assertIsNone(self.registry.instances[INSTANCE_B].command)
+
+    async def test_pairing_success_does_not_claim_reconnect_or_show_code(self):
+        publish(self.registry, value=snapshot('paired', canTest=True))
+        text, view = Delivery(self.bot).render(self.registry.instances[INSTANCE_A], True, None)
+        self.assertIn('Phone sign-in verified', text)
+        self.assertNotIn('reconnecting', text)
+        self.assertTrue(all(button.disabled for button in view.children))
+
     async def test_views_fit_discord_limits_and_disable_invalid_actions(self):
         view = Controls(self.bot, INSTANCE_A, CONTEXT_A, login=False, cancel=True)
         self.assertTrue(view.is_persistent())

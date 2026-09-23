@@ -125,7 +125,7 @@ Version **1.3.0** adds a shared Discord companion for instances on one Linux PC.
 
 Download `SocialXPFarm-remote-login.zip` alongside the mod from the [latest release](https://github.com/mcneds/SocialXPFarm/releases/tag/latest-build). Follow the [companion setup guide](remote-login/README.md) to create a bot, enter credentials locally, and register your instance directories. Only your configured Discord user can use the controls. No VPN or public incoming ports are required. Remote mode stays off until configured.
 
-Use Discord DMs for `/sxp status`, `/sxp login instance`, and `/sxp cancel instance`. These are separate from the in-game commands. Remote sign-in handles a current pending recovery; it does not switch healthy instances between accounts or enable automation remotely. Existing local login and silent refresh remain available.
+Use Discord DMs for `/sxp status`, `/sxp login instance`, and `/sxp cancel instance`. With **1.3.1+** and the matching companion, use **`/sxp test instance`** to start a real phone sign-in test remotely while the instance is connected to Hypixel. The test saves verified renewal credentials and keeps the current connection; it does not exercise disconnect/reconnect recovery. These are separate from in-game commands. Remote sign-in does not switch healthy instances between accounts or enable automation remotely. Existing local login and silent refresh remain available.
 
 The Microsoft device endpoint and initial polling were checked with the default OAuth registration; full phone authentication and Discord delivery still require live validation with your accounts. See the [developer test guide](remote-login/DEVELOPMENT.md) for the automated suites and live acceptance checklist.
 
