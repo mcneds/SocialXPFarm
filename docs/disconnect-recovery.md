@@ -90,7 +90,7 @@ Before unattended use, exercise these cases in a controlled client session:
 | Login/configuration/terrain screen stalled | One connection is aborted before another starts; no late ghost connection. |
 | Transient success followed by another kick | Backoff stays elevated until thirty seconds of continuous guesting. |
 | Fourth repeated protocol failure | Recovery pauses with the original reason and report controls available. |
-| Invalid session, Auth Me absent/present, cancel, offline login, successful Microsoft login | Correct pause/handoff; only a changed online session resumes retry. |
+| Invalid session, Auth Me absent/present, cancel, offline login, wrong alt, successful Microsoft login | Correct pause/handoff; only a changed online session for the original Minecraft UUID resumes retry. See the [detailed authentication scenarios](authentication-scenarios.md). |
 | Explicit account restriction, version mismatch, duplicate-login eviction | Pause and preserve the reason. |
 | Manual disconnect/cancel and another server | No automatic return to Hypixel. |
 | Owner offline, island full/private, renamed/missing profile, changed menu | Confirm destination correctness and lack of rapid retries. |

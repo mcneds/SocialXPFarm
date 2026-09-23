@@ -3,7 +3,6 @@ package dev.mcneds.socialxpfarm;
 import dev.mcneds.socialxpfarm.mixin.DisconnectedScreenAccessor;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.User;
 import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.DisconnectedScreen;
 import net.minecraft.client.gui.screens.Screen;
@@ -25,7 +24,7 @@ public final class ConnectionRecovery {
 
     private ServerData server;
     private DisconnectedScreen failureScreen;
-    private User staleUser;
+    private final AuthenticationRecovery<Screen> authentication = new AuthenticationRecovery<>();
     private int attempts;
     private final RecoveryDeadline retry = new RecoveryDeadline();
     private final RecoveryDeadline loading = new RecoveryDeadline();
@@ -72,7 +71,7 @@ public final class ConnectionRecovery {
             } else {
                 server = current;
                 failureScreen = null;
-                staleUser = null;
+                authentication.clear();
             }
             return;
         }
@@ -98,25 +97,26 @@ public final class ConnectionRecovery {
                 return;
             }
             if (action == RecoveryPolicy.Action.AUTHENTICATE) {
-                staleUser = client.getUser();
+                retry.clear();
                 LOGGER.warn("Session rejected; waiting for reauthentication before reconnecting.");
-                openAuthMe(client, disconnected);
+                authentication.begin(disconnected, client.getUser(), () -> openAuthMe(client, disconnected));
                 return;
             }
-            staleUser = null;
+            authentication.clear();
             int minimum = action == RecoveryPolicy.Action.COOLDOWN ? Math.max(1200, initialDelay) : initialDelay;
             schedule(minimum, Math.max(minimum, maximumDelay));
         }
 
         if (paused) return;
 
-        if (staleUser != null) {
-            User current = client.getUser();
-            if (current == staleUser || current.getAccessToken().equals(staleUser.getAccessToken())
-                    || current.getAccessToken().isBlank() || current.getAccessToken().equals("invalidtoken")) {
-                return; // Cancellation or an offline login must not start another retry loop.
-            }
-            staleUser = null;
+        AuthenticationRecovery.Result auth = authentication.poll(screen, client.getUser());
+        if (auth == AuthenticationRecovery.Result.WRONG_ACCOUNT) {
+            LOGGER.warn("Auth Me signed into a different Minecraft account. Use Re-Login to sign back into {}; automatic reconnect remains paused.",
+                    authentication.expectedName());
+            return;
+        }
+        if (auth == AuthenticationRecovery.Result.WAITING) return;
+        if (auth == AuthenticationRecovery.Result.READY) {
             attempts = 0;
             schedule(initialDelay, maximumDelay);
             LOGGER.info("Session changed; resuming reconnect recovery.");
@@ -186,7 +186,7 @@ public final class ConnectionRecovery {
     void reset(boolean clearSignals) {
         server = null;
         failureScreen = null;
-        staleUser = null;
+        authentication.clear();
         attempts = 0;
         retry.clear();
         loading.clear();

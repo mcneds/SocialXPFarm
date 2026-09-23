@@ -101,11 +101,13 @@ Existing configs use defaults for omitted settings. Set `autoReconnect` to `fals
 
 Install [Auth Me for Fabric 26.2](https://www.curseforge.com/minecraft/mc-mods/auth-me) and its required dependencies alongside this mod. The integration targets [Auth Me 9.3.0+26.2](https://github.com/axieum/authme/tree/v9.3.0%2B26.2); Auth Me is optional and is not bundled.
 
-When a session is rejected, choose Microsoft on the Auth Me screen and complete its browser login. SocialXPFarm waits until Auth Me returns to the disconnect screen with a changed session, then reconnects automatically. Auth Me does not silently refresh credentials; browser interaction may be required. Cancelling authentication leaves reconnects paused, and an offline login does not resume them. Without Auth Me, restart Minecraft to renew the session and reconnect manually.
+When a session is rejected, choose Microsoft on the Auth Me screen and complete its browser login. SocialXPFarm waits until Auth Me returns to the disconnect screen with a changed online session for the **same Minecraft account**, then reconnects automatically. Auth Me does not silently refresh credentials; the **Pick a login method** screen waits for your input. Cancelling authentication leaves reconnects paused, and an offline login does not resume them. Without Auth Me, restart Minecraft to renew the session and reconnect manually.
+
+For alts with different Microsoft accounts, hold **Left Ctrl while clicking Microsoft's icon** in Auth Me 9.3.0+26.2 to request browser account selection. Choose the account belonging to that instance. If the browser signs into your main account or another alt, automatic reconnect stays paused; use **Re-Login** and choose the correct account. The mod checks Minecraft UUIDs and does not store Microsoft login credentials. See the [authentication scenarios](docs/authentication-scenarios.md) for automated coverage and a two-instance browser test.
 
 ## Recovery verification
 
-`./gradlew build` runs regression tests for Hypixel address scoping, disconnect classification, queue/throttle notices, reconnect backoff, and monotonic deadlines (including nested translated errors and authentication service outages).
+`./gradlew build` runs regression tests for Hypixel address scoping, disconnect classification, queue/throttle notices, reconnect backoff, monotonic deadlines, and the authentication session gate (including cancellation, wrong-alt login, and delayed completion). Browser login and runtime Auth Me integration still require the [manual authentication checks](docs/authentication-scenarios.md).
 
 In-game checks: toggle off during a pending visit and confirm no further automation; change destination while disabled and confirm it remains disabled; enable own mode in the Hub and confirm `/is` stops repeating after arrival; switch back to guest mode; enter limbo and confirm `/lobby` → `/play sb` → the configured island; disconnect from Hypixel unexpectedly and confirm delayed reconnection; use Disconnect or cancel a connection and confirm it stays disconnected; test an expired session with Auth Me, including cancelling and successfully completing login.
 
