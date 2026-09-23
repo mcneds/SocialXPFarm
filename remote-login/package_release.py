@@ -13,7 +13,7 @@ with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
             continue
         # Explicit source directories and root files only; config/state files are never packaged.
         include = (len(relative.parts) == 1 and file.name in {
-            'README.md', 'DEVELOPMENT.md', 'requirements.in', 'requirements.lock', 'dev_scenarios.py', 'package_release.py'})
+            'README.md', 'DEVELOPMENT.md', 'BROWSER-LOGIN.md', 'requirements.in', 'requirements.lock', 'dev_scenarios.py', 'package_release.py'})
         include |= relative.parts[0] in {'sxp_remote', 'tests'} and file.suffix in {'.py', '.json'}
         if file.is_file() and not file.is_symlink() and include:
             archive.write(file, Path('remote-login') / relative)

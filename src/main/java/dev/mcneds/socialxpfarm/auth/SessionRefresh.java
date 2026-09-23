@@ -16,6 +16,10 @@ public final class SessionRefresh {
         default User pairBrowser(User expected, String clientId, Consumer<BrowserLogin> display, Save save) throws Exception {
             throw new AuthFailure(AuthFailure.Kind.LOCAL, "Browser sign-in is unavailable in this backend.");
         }
+        default User pairBrowser(User expected, String clientId, String redirectUri, Consumer<BrowserLogin> display, Save save) throws Exception {
+            if (redirectUri != null) throw new AuthFailure(AuthFailure.Kind.LOCAL, "HTTPS sign-in is unavailable in this backend.");
+            return pairBrowser(expected, clientId, display, save);
+        }
         default User pairDevice(User expected, String clientId, Consumer<DevicePrompt> display, Save save) throws Exception {
             throw new AuthFailure(AuthFailure.Kind.LOCAL, "Phone sign-in is unavailable in this backend.");
         }
@@ -93,11 +97,13 @@ public final class SessionRefresh {
         message = "Waiting for Microsoft sign-in from your phone.";
     }
 
-    public synchronized void pairBrowser(User user, String clientId) {
+    public synchronized void pairBrowser(User user, String clientId) { pairBrowser(user, clientId, null); }
+
+    public synchronized void pairBrowser(User user, String clientId, String redirectUri) {
         cancel();
         expected = user;
         long operation = generation;
-        launch(true, save -> backend.pairBrowser(user, clientId, login -> {
+        launch(true, save -> backend.pairBrowser(user, clientId, redirectUri, login -> {
             synchronized (this) {
                 if (operation != generation || Thread.currentThread().isInterrupted()) {
                     login.close();

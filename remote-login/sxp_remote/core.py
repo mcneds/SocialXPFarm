@@ -8,7 +8,7 @@ import time
 from urllib.parse import urlparse, parse_qsl
 import uuid
 
-from .config import private_write, load, login_email
+from .config import private_write, load, login_email, public_redirect, browser_callback
 
 STATES = {'idle', 'disabled', 'renewing', 'needs_login', 'signing_in', 'signed_in', 'restored', 'cancelled', 'failed', 'paired'}
 SNAPSHOT_KEYS = {'runId', 'context', 'username', 'accountId', 'state', 'message', 'canLogin', 'prompt', 'canTest', 'browserPrompt'}
@@ -42,15 +42,21 @@ def browser_parameters(prompt):
                 or uri.fragment):
             raise ValueError()
         query = unique_query(uri.query)
-        if (set(query) != {'client_id', 'response_type', 'redirect_uri', 'scope', 'state', 'prompt', 'code_challenge', 'code_challenge_method'}
+        required = {'client_id', 'response_type', 'redirect_uri', 'scope', 'state', 'prompt', 'code_challenge', 'code_challenge_method'}
+        if (set(query) - {'response_mode'} != required
                 or query['response_type'] != 'code' or query['prompt'] != 'select_account'
                 or query['scope'] != 'XboxLive.signin offline_access' or query['code_challenge_method'] != 'S256'
                 or not re.fullmatch(r'[A-Za-z0-9_-]{43}', query['state'])
-                or not re.fullmatch(r'[A-Za-z0-9_-]{43}', query['code_challenge'])
-                or not re.fullmatch(r'http://localhost:[0-9]{1,5}/callback', query['redirect_uri'])
-                or not 1 <= urlparse(query['redirect_uri']).port <= 65535):
+                or not re.fullmatch(r'[A-Za-z0-9_-]{43}', query['code_challenge'])):
             raise ValueError()
         identifier(query['client_id'])
+        if query['redirect_uri'].startswith('https:'):
+            public_redirect(query['redirect_uri'])
+            if query.get('response_mode') != 'form_post':
+                raise ValueError()
+        elif (not re.fullmatch(r'http://localhost:[0-9]{1,5}/callback', query['redirect_uri'])
+                or not 1 <= urlparse(query['redirect_uri']).port <= 65535 or 'response_mode' in query):
+            raise ValueError()
         return query
     except (ValueError, TypeError, KeyError, UnicodeError):
         raise ValueError('Invalid browser sign-in prompt') from None
@@ -75,7 +81,7 @@ def validate_callback(prompt, address):
         raise ValueError('That address does not match this sign-in. Copy the entire final localhost callback address from the current Microsoft sign-in tab.') from None
 
 
-def validate_snapshot(value, run_id):
+def validate_snapshot(value, run_id, callback_settings=None):
     if not isinstance(value, dict) or set(value) - SNAPSHOT_KEYS:
         raise ValueError('Unknown snapshot fields')
     if identifier(value.get('runId')) != run_id:
@@ -106,7 +112,11 @@ def validate_snapshot(value, run_id):
             raise ValueError('Prompt outside sign-in')
     browser = value.get('browserPrompt')
     if browser is not None:
-        browser_parameters(browser)
+        params = browser_parameters(browser)
+        if params['redirect_uri'].startswith('https:'):
+            if (not callback_settings or params['redirect_uri'] != callback_settings['redirectUri']
+                    or params['client_id'] != callback_settings['clientId']):
+                raise ValueError('Unregistered HTTPS callback')
         if value['state'] != 'signing_in' or prompt is not None:
             raise ValueError('Browser prompt outside sign-in or mixed with a device prompt')
     return dict(value)
@@ -127,6 +137,7 @@ class Instance:
 class Registry:
     def __init__(self, config, clock=time.monotonic, wall=time.time, state_path: Path | None = None, config_path: Path | None = None):
         self.owner = int(config['ownerId'])
+        self.browser_callback = browser_callback(config.get('browserCallback'), config['port'])
         self.instances = {i['id']: Instance(i['id'], i['label'], i['secret'], login_email=i.get('loginEmail', '')) for i in config['instances']}
         self.clock, self.wall, self.state_path = clock, wall, state_path
         self.config_path = config_path
@@ -187,7 +198,7 @@ class Registry:
         if self.online(instance) and instance.snapshot['runId'] != run_id:
             raise RuntimeError('Another process is using this instance identity')
         if 'snapshot' in body:
-            snapshot = validate_snapshot(body['snapshot'], run_id)
+            snapshot = validate_snapshot(body['snapshot'], run_id, self.browser_callback)
             old = instance.snapshot
             if old is None or (old['runId'], old['context'], old['accountId']) != (run_id, snapshot['context'], snapshot['accountId']):
                 instance.command = None

@@ -74,7 +74,11 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
     }
 
     @Override public User pairBrowser(User expected, String clientId, Consumer<BrowserLogin> display, SessionRefresh.Save save) throws Exception {
-        try (OAuthCallback callback = new OAuthCallback(clientId)) {
+        return pairBrowser(expected, clientId, null, display, save);
+    }
+
+    @Override public User pairBrowser(User expected, String clientId, String redirectUri, Consumer<BrowserLogin> display, SessionRefresh.Save save) throws Exception {
+        try (OAuthCallback callback = new OAuthCallback(clientId, redirectUri)) {
             display.accept(callback);
             return finishBrowserPair(expected, clientId, callback, save);
         }
@@ -189,6 +193,13 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
         }
         if (response.status() < 200 || response.status() >= 300) {
             String error = json.has("error") && json.get("error").isJsonPrimitive() ? json.get("error").getAsString() : "";
+            if (endpoint.equals(MINECRAFT) && response.status() == 403) {
+                String detail = json.has("errorMessage") && json.get("errorMessage").isJsonPrimitive()
+                        ? json.get("errorMessage").getAsString() : error;
+                if (detail.equalsIgnoreCase("Invalid app registration"))
+                    throw new AuthFailure(AuthFailure.Kind.LOCAL,
+                            "Minecraft rejected this Microsoft application registration. Verify Minecraft API access before enabling HTTPS sign-in.");
+            }
             if (devicePoll) {
                 if (error.equals("authorization_pending")) throw new AuthFailure(AuthFailure.Kind.PENDING, "Awaiting phone sign-in.");
                 if (error.equals("slow_down")) throw new AuthFailure(AuthFailure.Kind.SLOW_DOWN, "Waiting before the next sign-in check.");
@@ -198,7 +209,7 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
             if (endpoint.equals(TOKEN) && Set.of("invalid_grant", "interaction_required", "login_required", "consent_required").contains(error))
                 throw new AuthFailure(AuthFailure.Kind.LOGIN, "Microsoft requires another sign-in. Pair this instance again.");
             if ((endpoint.equals(TOKEN) || endpoint.equals(DEVICE)) && Set.of("invalid_client", "invalid_scope", "unauthorized_client", "unsupported_grant_type").contains(error))
-                throw new AuthFailure(AuthFailure.Kind.LOCAL, "Microsoft rejected the OAuth client configuration. Check for a mod update.");
+                throw new AuthFailure(AuthFailure.Kind.LOCAL, "Microsoft rejected the OAuth client configuration. Check the configured application and redirect URI.");
             if (Set.of("temporarily_unavailable", "server_error").contains(error))
                 throw new AuthFailure(AuthFailure.Kind.RETRY, "Authentication service unavailable; retrying in 60 seconds.");
             throw new AuthFailure(AuthFailure.Kind.ACCOUNT, "Authentication was refused. Check the account and pair again.");

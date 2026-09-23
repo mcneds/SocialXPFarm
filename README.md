@@ -131,6 +131,8 @@ The callback form carries a short-lived authorization code through Discord; reus
 
 Use **`/sxp email instance address`** in the owner-only bot DM to set the Microsoft email reminder displayed for each instance. Sign-in messages show this email beside the Minecraft username and link to Microsoft’s account picker. Email hints do not replace Minecraft UUID verification.
 
+The **1.4.0 candidate** adds an optional HTTPS callback for browser-only phone sign-in, using your own Microsoft registration and a Cloudflare Tunnel to the companion PC. See [setup, compatibility verification, and rollback](remote-login/BROWSER-LOGIN.md). This remains disabled until configured; live registration verification is required before migration.
+
 ## Recovery verification
 
 `./gradlew build` runs regression tests for Hypixel address scoping, disconnect classification, queue/throttle notices, reconnect backoff, monotonic deadlines, OAuth callbacks/PKCE, token rotation, per-instance storage, renewal retries/cancellation, and account identity. Browser login and runtime Auth Me integration still require the [manual authentication checks](docs/authentication-scenarios.md).

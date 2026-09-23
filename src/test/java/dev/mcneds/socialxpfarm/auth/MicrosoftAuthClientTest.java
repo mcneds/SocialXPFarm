@@ -212,4 +212,48 @@ class MicrosoftAuthClientTest {
         }
     }
 
+    @Test void httpsCallbackExchangesExactRedirectAndKeepsProofKeyAndTokensOnInstance() throws Exception {
+        String clientId = UUID.randomUUID().toString();
+        String redirect = "https://auth.example.test/oauth/callback";
+        AtomicReference<Map<String, String>> authorization = new AtomicReference<>();
+        AtomicReference<RefreshTokenStore.Credential> saved = new AtomicReference<>();
+        var client = new MicrosoftAuthClient((endpoint, body, form, bearer) -> {
+            assertNull(saved.get());
+            if (endpoint.equals(MicrosoftAuthClient.TOKEN)) {
+                var fields = OAuthCallback.parseQuery(body);
+                assertEquals(redirect, fields.get("redirect_uri"));
+                assertEquals(clientId, fields.get("client_id"));
+                assertEquals("synthetic-https", fields.get("code"));
+                assertEquals(authorization.get().get("code_challenge"), OAuthCallback.challenge(fields.get("code_verifier")));
+                assertFalse(fields.containsKey("client_secret"));
+            }
+            return success(endpoint);
+        });
+        User expected = new User("Alt", ALT, "synthetic-live", Optional.empty(), Optional.empty());
+        User result = client.pairBrowser(expected, clientId, redirect, receiver -> {
+            var params = OAuthCallback.parseQuery(URI.create(receiver.prompt().authorizationUri()).getRawQuery());
+            authorization.set(params);
+            assertEquals("form_post", params.get("response_mode"));
+            assertTrue(receiver.submit(redirect + "?state=" + params.get("state") + "&code=synthetic-https"));
+        }, saved::set);
+        assertEquals(ALT, result.getProfileId());
+        assertEquals(clientId, saved.get().clientId());
+        assertEquals("synthetic-live", expected.getAccessToken());
+    }
+
+    @Test void unapprovedMinecraftRegistrationIsAConfigurationFailureWithoutProviderLeakage() {
+        var client = new MicrosoftAuthClient((endpoint, body, form, bearer) -> endpoint.equals(MicrosoftAuthClient.MINECRAFT)
+                ? new MicrosoftAuthClient.Response(403, "{\"error\":\"ForbiddenOperationException\",\"errorMessage\":\"Invalid app registration\",\"detail\":\"synthetic-secret\"}")
+                : success(endpoint));
+        var expected = new User("Alt", ALT, "synthetic-live", Optional.empty(), Optional.empty());
+        var error = assertThrows(AuthFailure.class, () -> client.pairBrowser(expected, UUID.randomUUID().toString(),
+                "https://auth.example.test/oauth/callback", receiver -> {
+                    var fields = OAuthCallback.parseQuery(URI.create(receiver.prompt().authorizationUri()).getRawQuery());
+                    assertTrue(receiver.submit(fields.get("redirect_uri") + "?state=" + fields.get("state") + "&code=synthetic-code"));
+                }, value -> fail("Rejected registration must not replace credentials")));
+        assertEquals(AuthFailure.Kind.LOCAL, error.kind);
+        assertTrue(error.getMessage().contains("application registration"));
+        assertFalse(error.toString().contains("synthetic-secret"));
+    }
+
 }

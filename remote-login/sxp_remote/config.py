@@ -12,6 +12,31 @@ DEFAULT_PATH = Path.home() / '.config' / 'socialxpfarm-remote' / 'config.json'
 DEFAULT_CLIENT = 'e16699bb-2aa8-46da-b5e3-45cbcce29091'
 
 
+def public_redirect(value):
+    if (not isinstance(value, str) or len(value) > 256
+            or not re.fullmatch(r'https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}/oauth/callback', value)
+            or '.localhost/' in value or '.local/' in value):
+        raise ValueError('Use an HTTPS domain with the exact path /oauth/callback')
+    return value
+
+
+def browser_callback(value, control_port=38471):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {'clientId', 'redirectUri', 'port'}:
+        raise ValueError('Invalid browser callback settings')
+    try:
+        client = str(uuid.UUID(value['clientId']))
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError('Invalid Microsoft application ID') from None
+    if client == DEFAULT_CLIENT:
+        raise ValueError('HTTPS sign-in requires an application registration you control')
+    public_redirect(value['redirectUri'])
+    if type(value['port']) is not int or not 1024 <= value['port'] <= 65535 or value['port'] == control_port:
+        raise ValueError('The public callback must use a separate local port')
+    return dict(value, clientId=client)
+
+
 def login_email(value):
     if not isinstance(value, str):
         raise ValueError('Enter an email address, or leave the hint empty')
@@ -52,6 +77,8 @@ def load(path: Path):
         raise ValueError('Invalid owner ID')
     if not isinstance(config.get('port'), int) or not 1024 <= config['port'] <= 65535:
         raise ValueError('Invalid local port')
+    if 'browserCallback' in config:
+        config['browserCallback'] = browser_callback(config['browserCallback'], config['port'])
     seen = set()
     for item in config['instances']:
         uuid.UUID(item['id'])
@@ -83,9 +110,16 @@ def setup(path: Path):
         item['label'] = label[:64]
         if existing is None:
             config['instances'].append(item)
-        private_write(directory / 'config' / 'socialxpfarm-auth' / 'remote.json', {
+        remote_path = directory / 'config' / 'socialxpfarm-auth' / 'remote.json'
+        if remote_path.is_symlink() or remote_path.parent.is_symlink():
+            raise ValueError('Configuration must not be a symbolic link')
+        previous = json.loads(remote_path.read_text()) if remote_path.exists() else {}
+        remote = {
             'enabled': True, 'instanceId': item['id'], 'secret': item['secret'],
-            'port': config['port'], 'clientId': DEFAULT_CLIENT})
+            'port': config['port'], 'clientId': previous.get('clientId', DEFAULT_CLIENT)}
+        if previous.get('redirectUri') is not None:
+            remote['redirectUri'] = public_redirect(previous['redirectUri'])
+        private_write(remote_path, remote)
     private_write(path, config)
     load(path)
     print('Configuration saved. Restart registered Minecraft instances, then start the companion.')

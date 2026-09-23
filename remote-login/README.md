@@ -4,6 +4,10 @@ This companion runs on the **same Linux PC as your Minecraft instances**. It sen
 
 Normal refresh-token renewal stays automatic. The form passes a short-lived, single-use authorization code through Discord and the local companion. The PKCE verifier, access tokens, and refresh tokens stay on the Minecraft instance; passwords are entered only on Microsoft’s website. Callback addresses are never written to the companion’s configuration/state files or echoed in chat. Discord processes form submissions, so treat the callback as sensitive and submit it only to your own bot.
 
+## Optional browser-only sign-in
+
+The **1.4.0 candidate** supports a registered HTTPS callback through Cloudflare Tunnel, so a phone can finish sign-in without copying a localhost address. This is opt-in and requires a Microsoft application you control. Follow the [browser-only setup and compatibility check](BROWSER-LOGIN.md); verify a full Minecraft login on one instance before migration. Existing desktop, device-code and callback-form flows remain available.
+
 ## Install
 
 Use SocialXPFarm **1.3.2 or newer**, Auth Me **9.3.0+26.2**, and Python **3.12–3.14**. Keep only one enabled mod jar per instance and restart when updating. Update the companion alongside the mod.

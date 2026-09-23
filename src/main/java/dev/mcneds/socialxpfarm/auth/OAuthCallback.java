@@ -8,9 +8,10 @@ import java.security.*;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Per-login loopback listener, with independent ports, state and PKCE for concurrent alt instances. */
+/** Single-use authorization receiver: local browser listener or remote HTTPS callback, with per-attempt state and PKCE. */
 final class OAuthCallback implements BrowserLogin {
     private final HttpServer server;
+    private final String publicRedirect;
     private final CompletableFuture<String> code = new CompletableFuture<>();
     final String verifier = random();
     final String state = random();
@@ -22,11 +23,18 @@ final class OAuthCallback implements BrowserLogin {
 
     OAuthCallback() throws IOException { this(MicrosoftAuthClient.CLIENT_ID, System::nanoTime); }
     OAuthCallback(String clientId) throws IOException { this(clientId, System::nanoTime); }
-    OAuthCallback(String clientId, java.util.function.LongSupplier clock) throws IOException {
+    OAuthCallback(String clientId, String redirect) throws IOException { this(clientId, redirect, System::nanoTime); }
+    OAuthCallback(String clientId, java.util.function.LongSupplier clock) throws IOException { this(clientId, null, clock); }
+    OAuthCallback(String clientId, String redirect, java.util.function.LongSupplier clock) throws IOException {
         UUID.fromString(clientId);
         this.clientId = clientId;
         this.clock = clock;
         started = clock.getAsLong();
+        publicRedirect = validatePublicRedirect(redirect);
+        if (publicRedirect != null) {
+            server = null;
+            return;
+        }
         server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/callback", exchange -> {
             int status = 400;
@@ -48,13 +56,15 @@ final class OAuthCallback implements BrowserLogin {
         server.start();
     }
 
-    String redirect() { return "http://localhost:" + server.getAddress().getPort() + "/callback"; }
+    String redirect() { return publicRedirect != null ? publicRedirect : "http://localhost:" + server.getAddress().getPort() + "/callback"; }
 
     URI authorizeUri() {
-        return URI.create(MicrosoftAuthClient.AUTHORIZE + "?" + MicrosoftAuthClient.form(Map.of(
+        Map<String, String> fields = new HashMap<>(Map.of(
                 "client_id", clientId, "response_type", "code", "redirect_uri", redirect(),
                 "scope", "XboxLive.signin offline_access", "state", state, "prompt", "select_account",
-                "code_challenge", challenge(verifier), "code_challenge_method", "S256")));
+                "code_challenge", challenge(verifier), "code_challenge_method", "S256"));
+        if (publicRedirect != null) fields.put("response_mode", "form_post");
+        return URI.create(MicrosoftAuthClient.AUTHORIZE + "?" + MicrosoftAuthClient.form(fields));
     }
 
     @Override public BrowserPrompt prompt() {
@@ -109,5 +119,13 @@ final class OAuthCallback implements BrowserLogin {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    @Override public void close() { server.stop(0); code.cancel(false); }
+    static String validatePublicRedirect(String value) {
+        if (value == null) return null;
+        if (value.length() > 256 || !value.matches("https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}/oauth/callback")
+                || value.contains(".localhost/") || value.contains(".local/"))
+            throw new IllegalArgumentException("Invalid public callback address");
+        return value;
+    }
+
+    @Override public void close() { if (server != null) server.stop(0); code.cancel(false); }
 }

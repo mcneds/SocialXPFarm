@@ -78,6 +78,22 @@ async def main():
     assert delivery.edits[-1][3] is None
     assert registry.instances[INSTANCE_A].snapshot['state'] == 'paired'
     print('PASS: Discord test starts from idle and finishes paired without claiming reconnection')
+    from sxp_remote.callback_web import CallbackService
+    fixture = json.loads((Path(__file__).parent / 'tests/fixtures/https-snapshot.json').read_text())
+    public = fixture['browserPrompt']
+    params = browser_parameters(public)
+    configured = config()
+    configured['browserCallback'] = {'clientId': params['client_id'], 'redirectUri': params['redirect_uri'], 'port':38472}
+    hosted = Registry(configured, clock, clock)
+    publish(hosted, value=snapshot('signing_in', browserPrompt=public))
+    callback_service = CallbackService(hosted)
+    receipt, secret = callback_service.accept({'state': params['state'], 'code':'synthetic-code'})
+    assert callback_service.status(receipt, secret) == 'checking'
+    assert hosted.instances[INSTANCE_B].command is None
+    publish(hosted, value=snapshot('paired'))
+    assert callback_service.status(receipt, secret) == 'complete'
+    assert callback_service.status(receipt, 'wrong-browser') == 'expired'
+    print('PASS: HTTPS callback reports success only after the intended Minecraft account is verified')
     print('Developer scenarios complete. No real sign-ins or messages were sent.')
 
 

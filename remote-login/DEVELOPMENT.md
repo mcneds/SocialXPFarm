@@ -63,3 +63,13 @@ Use two owned accounts, distinct game directories, a dedicated test bot and your
 10. Inspect logs/artifacts for accidental credential disclosure. Never attach actual `config.json`, `remote.json`, `account.json`, codes, or tokens to bug reports.
 
 Record jar/companion versions, expected/actual account names, the scenario and observed result. Automated tests do not establish runtime Fabric mixin correctness or actual server message/destination semantics.
+
+## HTTPS callback candidate (1.4.0)
+
+The `https-snapshot.json` fixture is shared with Java. Tests exercise form-post authorization, exact registered redirects, per-instance PKCE, public-client rejection, authenticated local delivery, independent browser receipts, replay prevention after acknowledgement, offline/expired/cancelled/changed attempts, wrong-account terminal status, request limits, rate limits, private-route isolation, security headers, and setup/rollback without touching refresh credentials. Tunnel units also pass real `systemd-analyze verify`.
+
+`browserCallback` in companion configuration contains `clientId`, `redirectUri`, and a separate `port` (default 38472). Selected instances add optional `redirectUri` to `remote.json` and use that registration's `clientId`. HTTPS prompts require the configured registration/address and `response_mode=form_post`; unconfigured companions reject them. The existing callback command transports the synthesized address only over the authenticated loopback bridge; the public browser never sees it.
+
+The callback service exposes only `POST /oauth/callback`, `GET /oauth/result/{receipt}`, and its `/status` subroute. Receipt paths are public random identifiers, while independently scoped Secure/HttpOnly cookies authorize status reads. OAuth state authenticates callback delivery to a pending owner-initiated attempt; it grants no general control. Callback state, codes and cookies are not persisted. Reconciliation, monotonic receipt expiry, and a periodic cleanup task limit their lifetime.
+
+Run the normal suites and scenario runner. Before release or broad deployment, complete the [live registration and mobile-data checks](BROWSER-LOGIN.md). No automated test creates an Azure application, modifies Cloudflare DNS, logs into a real account, or proves provider approval.
