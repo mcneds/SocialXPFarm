@@ -1,5 +1,7 @@
 # Browser-only phone login (1.4.0, awaiting live registration verification)
 
+**NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
+
 The optional HTTPS flow is **Discord → Sign in → Microsoft account picker → confirmation page**. It removes the localhost error and manual callback form. It requires your own Microsoft application registration and a callback domain, such as `https://auth.mcneds.dev/oauth/callback`.
 
 This feature is disabled by default. Keep the working 1.3.2 setup until the application and callback are verified on one test instance. Passing unit tests does not prove Microsoft/Minecraft accepts a new app registration. Do not migrate other instances if the first full sign-in fails.

@@ -1,5 +1,7 @@
 # SocialXPFarm
 
+**NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
+
 Client-side Fabric **26.2** mod with toggleable recovery to your own Hypixel SkyBlock island or a configured player's island.
 
 ## Install and start

@@ -123,7 +123,7 @@ def result_page(nonce):
     # All text is fixed. No account, code, OAuth state or provider text is inserted into HTML.
     return '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SocialXPFarm sign-in</title><style nonce="NONCE">body{font:18px system-ui;background:#111827;color:#f9fafb;margin:0;padding:3rem 1.5rem}main{max-width:32rem;margin:3rem auto}p{line-height:1.6;color:#d1d5db}</style>
-<main><h1>Microsoft sign-in</h1><p id="status">Checking your Minecraft account…</p><noscript>Return to Discord to check the result.</noscript></main>
+<main><h1>SocialXPFarm sign-in</h1><p>NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.</p><p id="status">Checking your Minecraft account…</p><noscript>Return to Discord to check the result.</noscript></main>
 <script nonce="NONCE">
 const line = document.getElementById('status');
 const deadline = Date.now() + 300000;
