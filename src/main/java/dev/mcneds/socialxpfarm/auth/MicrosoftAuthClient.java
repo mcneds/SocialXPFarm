@@ -9,14 +9,16 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
 /** OAuth renewal plus Xbox/Minecraft exchange. No credentials or provider response bodies are logged. */
 public final class MicrosoftAuthClient implements SessionRefresh.Backend {
     // Auth Me's public desktop client registration, used with its session installation API.
-    static final String CLIENT_ID = "e16699bb-2aa8-46da-b5e3-45cbcce29091";
+    public static final String CLIENT_ID = "e16699bb-2aa8-46da-b5e3-45cbcce29091";
     static final String AUTHORIZE = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
     static final String TOKEN = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+    static final String DEVICE = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
     static final String XBOX = "https://user.auth.xboxlive.com/user/authenticate";
     static final String XSTS = "https://xsts.auth.xboxlive.com/xsts/authorize";
     static final String MINECRAFT = "https://api.minecraftservices.com/authentication/login_with_xbox";
@@ -29,6 +31,9 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
         Response send(String endpoint, String body, boolean form, String bearer) throws IOException, InterruptedException;
     }
     private final Transport transport;
+    private LongSupplier clock = System::nanoTime;
+    @FunctionalInterface interface Sleep { void milliseconds(long milliseconds) throws InterruptedException; }
+    private Sleep sleep = Thread::sleep;
 
     public MicrosoftAuthClient() {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20))
@@ -45,15 +50,20 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
     }
 
     MicrosoftAuthClient(Transport transport) { this.transport = transport; }
+    MicrosoftAuthClient(Transport transport, LongSupplier clock, Sleep sleep) {
+        this.transport = transport;
+        this.clock = clock;
+        this.sleep = sleep;
+    }
 
     @Override public User refresh(RefreshTokenStore.Credential saved, SessionRefresh.Save save) throws Exception {
-        JsonObject tokens = request(TOKEN, form(Map.of("client_id", CLIENT_ID, "grant_type", "refresh_token",
+        JsonObject tokens = request(TOKEN, form(Map.of("client_id", saved.clientId(), "grant_type", "refresh_token",
                 "refresh_token", saved.refreshToken(), "scope", "XboxLive.signin offline_access")), true, null);
         String access = required(tokens, "access_token");
         String rotated = tokens.has("refresh_token") ? required(tokens, "refresh_token") : saved.refreshToken();
         // Persist rotation before Xbox/profile calls, which can fail after Microsoft already renewed it.
-        save.accept(new RefreshTokenStore.Credential(saved.uuid(), saved.name(), rotated));
-        return minecraftUser(access, saved.uuid());
+        save.accept(new RefreshTokenStore.Credential(saved.uuid(), saved.name(), rotated, saved.clientId()));
+        return minecraftUser(access, saved.uuid(), saved.clientId());
     }
 
     @Override public User pair(User expected, Consumer<URI> browser, SessionRefresh.Save save) throws Exception {
@@ -62,13 +72,55 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
             String code = callback.awaitCode();
             JsonObject tokens = request(TOKEN, form(Map.of("client_id", CLIENT_ID, "grant_type", "authorization_code",
                     "code", code, "redirect_uri", callback.redirect(), "code_verifier", callback.verifier)), true, null);
-            User user = minecraftUser(required(tokens, "access_token"), expected.getProfileId());
+            User user = minecraftUser(required(tokens, "access_token"), expected.getProfileId(), CLIENT_ID);
             save.accept(new RefreshTokenStore.Credential(user.getProfileId(), user.getName(), required(tokens, "refresh_token")));
             return user;
         }
     }
 
-    private User minecraftUser(String access, UUID expected) throws Exception {
+    @Override public User pairDevice(User expected, String clientId, Consumer<DevicePrompt> display, SessionRefresh.Save save) throws Exception {
+        UUID.fromString(clientId);
+        JsonObject challenge = request(DEVICE, form(Map.of("client_id", clientId, "scope", "XboxLive.signin offline_access")), true, null);
+        long duration = positiveSeconds(challenge, "expires_in") * 1_000_000_000L;
+        long interval = challenge.has("interval") ? positiveSeconds(challenge, "interval") : 5;
+        long started = clock.getAsLong();
+        String deviceCode = required(challenge, "device_code");
+        try {
+            display.accept(new DevicePrompt(required(challenge, "user_code"), required(challenge, "verification_uri"),
+                    System.currentTimeMillis() + duration / 1_000_000));
+        } catch (IllegalArgumentException e) { throw malformed(); }
+        while (clock.getAsLong() - started < duration) {
+            long remaining = duration - (clock.getAsLong() - started);
+            sleep.milliseconds(Math.min(interval * 1000, Math.max(1, (remaining + 999_999) / 1_000_000)));
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            if (clock.getAsLong() - started >= duration) break;
+            JsonObject tokens;
+            try {
+                tokens = request(TOKEN, form(Map.of("client_id", clientId,
+                        "grant_type", "urn:ietf:params:oauth:grant-type:device_code", "device_code", deviceCode)), true, null, true);
+            } catch (AuthFailure failure) {
+                if (failure.kind == AuthFailure.Kind.SLOW_DOWN) interval += 5;
+                else if (failure.kind == AuthFailure.Kind.RETRY) interval = Math.max(interval, 60);
+                else if (failure.kind != AuthFailure.Kind.PENDING) throw failure;
+                continue;
+            }
+            // A device grant is consumed once. Never redeem it again after a downstream error.
+            User user = minecraftUser(required(tokens, "access_token"), expected.getProfileId(), clientId);
+            save.accept(new RefreshTokenStore.Credential(user.getProfileId(), user.getName(), required(tokens, "refresh_token"), clientId));
+            return user;
+        }
+        throw new AuthFailure(AuthFailure.Kind.LOGIN, "Phone sign-in expired. Request a new code when ready.");
+    }
+
+    private static long positiveSeconds(JsonObject json, String field) throws AuthFailure {
+        try {
+            long value = json.get(field).getAsLong();
+            if (value < 1 || value > 3600) throw new IllegalArgumentException();
+            return value;
+        } catch (RuntimeException e) { throw malformed(); }
+    }
+
+    private User minecraftUser(String access, UUID expected, String clientId) throws Exception {
         JsonObject xboxProperties = new JsonObject();
         xboxProperties.addProperty("AuthMethod", "RPS");
         xboxProperties.addProperty("SiteName", "user.auth.xboxlive.com");
@@ -96,7 +148,7 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
         } catch (RuntimeException e) { throw malformed(); }
         if (!uuid.equals(expected)) throw new AuthFailure(AuthFailure.Kind.ACCOUNT,
                 "Wrong Minecraft account. Pair again with the Microsoft account for this instance.");
-        return new User(required(profile, "name"), uuid, token, Optional.empty(), Optional.of(CLIENT_ID));
+        return new User(required(profile, "name"), uuid, token, Optional.empty(), Optional.of(clientId));
     }
 
     private static JsonObject envelope(JsonObject properties, String relyingParty) {
@@ -108,6 +160,10 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
     }
 
     private JsonObject request(String endpoint, String body, boolean isForm, String bearer) throws AuthFailure, InterruptedException {
+        return request(endpoint, body, isForm, bearer, false);
+    }
+
+    private JsonObject request(String endpoint, String body, boolean isForm, String bearer, boolean devicePoll) throws AuthFailure, InterruptedException {
         Response response;
         try { response = transport.send(endpoint, body, isForm, bearer); }
         catch (IOException e) { throw new AuthFailure(AuthFailure.Kind.RETRY, "Authentication network request failed; retrying in 60 seconds."); }
@@ -122,9 +178,15 @@ public final class MicrosoftAuthClient implements SessionRefresh.Backend {
         }
         if (response.status() < 200 || response.status() >= 300) {
             String error = json.has("error") && json.get("error").isJsonPrimitive() ? json.get("error").getAsString() : "";
+            if (devicePoll) {
+                if (error.equals("authorization_pending")) throw new AuthFailure(AuthFailure.Kind.PENDING, "Awaiting phone sign-in.");
+                if (error.equals("slow_down")) throw new AuthFailure(AuthFailure.Kind.SLOW_DOWN, "Waiting before the next sign-in check.");
+                if (Set.of("authorization_declined", "access_denied", "expired_token", "bad_verification_code").contains(error))
+                    throw new AuthFailure(AuthFailure.Kind.LOGIN, "Phone sign-in expired or was declined. Request a new code when ready.");
+            }
             if (endpoint.equals(TOKEN) && Set.of("invalid_grant", "interaction_required", "login_required", "consent_required").contains(error))
                 throw new AuthFailure(AuthFailure.Kind.LOGIN, "Microsoft requires another sign-in. Pair this instance again.");
-            if (endpoint.equals(TOKEN) && Set.of("invalid_client", "invalid_scope", "unauthorized_client", "unsupported_grant_type").contains(error))
+            if ((endpoint.equals(TOKEN) || endpoint.equals(DEVICE)) && Set.of("invalid_client", "invalid_scope", "unauthorized_client", "unsupported_grant_type").contains(error))
                 throw new AuthFailure(AuthFailure.Kind.LOCAL, "Microsoft rejected the OAuth client configuration. Check for a mod update.");
             if (Set.of("temporarily_unavailable", "server_error").contains(error))
                 throw new AuthFailure(AuthFailure.Kind.RETRY, "Authentication service unavailable; retrying in 60 seconds.");

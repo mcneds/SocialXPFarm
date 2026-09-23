@@ -31,6 +31,9 @@ public final class ConnectionRecovery {
     private User rejectedUser;
     private boolean loginScreenShown;
     private SessionRefresh.Status lastLoginStatus;
+    private String remoteContext = "";
+    private String remotePhase = "idle";
+    private String remoteMessage = "";
     private int attempts;
     private final RecoveryDeadline retry = new RecoveryDeadline();
     private final RecoveryDeadline loading = new RecoveryDeadline();
@@ -157,10 +160,15 @@ public final class ConnectionRecovery {
     private void beginLogin(Minecraft client, DisconnectedScreen parent) {
         cancelAutomaticLogin();
         if (!AutomaticLogin.available()) {
+            remoteContext = java.util.UUID.randomUUID().toString();
+            remotePhase = "failed";
+            remoteMessage = "Install the supported Auth Me version for session renewal.";
             openAuthMe(client, parent);
             return;
         }
         rejectedUser = client.getUser();
+        remoteContext = java.util.UUID.randomUUID().toString();
+        remotePhase = "renewing";
         automaticLogin = AutomaticLogin.create();
         automaticLogin.start(rejectedUser);
         tickLogin(client, parent);
@@ -170,6 +178,12 @@ public final class ConnectionRecovery {
         if (automaticLogin == null) return;
         // A manual Auth Me login takes precedence over an older background operation.
         if (client.getUser() != rejectedUser) {
+            User current = client.getUser();
+            boolean renewed = current.getProfileId().equals(rejectedUser.getProfileId())
+                    && !current.getAccessToken().equals(rejectedUser.getAccessToken())
+                    && !current.getAccessToken().isBlank() && !current.getAccessToken().equals("invalidtoken");
+            remotePhase = renewed ? "signed_in" : "cancelled";
+            remoteMessage = "Session changed manually.";
             cancelAutomaticLogin();
             return;
         }
@@ -184,16 +198,66 @@ public final class ConnectionRecovery {
                 paused = true;
                 LOGGER.warn("Could not install the renewed session. Check the Auth Me version and restart this instance.");
             }
+            remotePhase = paused ? "failed" : "signed_in";
+            remoteMessage = paused ? "Session installation failed; check Auth Me." : "Signed in; reconnecting.";
             cancelAutomaticLogin();
-        } else if ((status == SessionRefresh.Status.NEEDS_LOGIN || status == SessionRefresh.Status.FAILED) && !loginScreenShown) {
+        } else if ((status == SessionRefresh.Status.NEEDS_LOGIN || status == SessionRefresh.Status.FAILED)
+                && !loginScreenShown && !RemoteLoginBridge.INSTANCE.enabled()) {
             loginScreenShown = true;
             client.setScreenAndShow(new AutomaticLoginScreen(parent, automaticLogin, rejectedUser,
                     status == SessionRefresh.Status.NEEDS_LOGIN));
         }
     }
 
+    void remoteCommand(Minecraft client, String context, String action) {
+        if (!RemoteLoginBridge.INSTANCE.enabled() || !remoteContext.equals(context) || automaticLogin == null
+                || paused || client.getUser() != rejectedUser || client.gui.screen() != failureScreen) return;
+        SessionRefresh.Status status = automaticLogin.status();
+        if (action.equals("login") && (status == SessionRefresh.Status.NEEDS_LOGIN || status == SessionRefresh.Status.IDLE)) {
+            remoteContext = java.util.UUID.randomUUID().toString();
+            remotePhase = "signing_in";
+            automaticLogin.pairDevice(rejectedUser, RemoteLoginBridge.INSTANCE.clientId());
+        } else if (action.equals("cancel") && remotePhase.equals("signing_in")) {
+            automaticLogin.cancel();
+            remoteContext = java.util.UUID.randomUUID().toString();
+            remotePhase = "cancelled";
+            remoteMessage = "Phone sign-in cancelled.";
+        }
+    }
+
+    RemoteLoginBridge.Snapshot remoteSnapshot(Minecraft client, String runId, boolean enabled) {
+        String phase = enabled ? remotePhase : "disabled";
+        String message = remoteMessage;
+        boolean canLogin = false;
+        dev.mcneds.socialxpfarm.auth.DevicePrompt prompt = null;
+        if (enabled && automaticLogin != null) {
+            SessionRefresh.Status status = automaticLogin.status();
+            phase = switch (status) {
+                case NEEDS_LOGIN -> "needs_login";
+                case FAILED -> "failed";
+                case IDLE -> "cancelled";
+                case RUNNING -> remotePhase.equals("signing_in") ? "signing_in" : "renewing";
+                case RETRY_WAIT -> "renewing";
+                case READY -> "signing_in";
+            };
+            message = automaticLogin.message();
+            canLogin = (status == SessionRefresh.Status.NEEDS_LOGIN || status == SessionRefresh.Status.IDLE)
+                    && !paused && client.gui.screen() == failureScreen && client.getUser() == rejectedUser;
+            prompt = automaticLogin.devicePrompt();
+        }
+        User user = rejectedUser == null ? client.getUser() : rejectedUser;
+        return new RemoteLoginBridge.Snapshot(runId, remoteContext, user.getName(), user.getProfileId().toString(),
+                phase, message, canLogin, prompt);
+    }
+
     private void cancelAutomaticLogin() {
-        if (automaticLogin != null) automaticLogin.cancel();
+        if (automaticLogin != null) {
+            automaticLogin.cancel();
+            if (remotePhase.equals("renewing") || remotePhase.equals("signing_in")) {
+                remotePhase = "cancelled";
+                remoteMessage = "Authentication recovery cancelled.";
+            }
+        }
         automaticLogin = null;
         rejectedUser = null;
         loginScreenShown = false;
@@ -217,6 +281,7 @@ public final class ConnectionRecovery {
     }
 
     void markHealthy() {
+        if (remotePhase.equals("signed_in")) { remotePhase = "restored"; remoteMessage = "Destination restored."; }
         if (healthyTicks < 600 && ++healthyTicks == 600) {
             attempts = 0;
             protocolFailures = 0;
@@ -245,6 +310,9 @@ public final class ConnectionRecovery {
         failureScreen = null;
         authentication.clear();
         cancelAutomaticLogin();
+        remoteContext = "";
+        remotePhase = "idle";
+        remoteMessage = "";
         attempts = 0;
         retry.clear();
         loading.clear();

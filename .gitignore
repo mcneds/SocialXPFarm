@@ -9,3 +9,7 @@ run/
 .settings/
 .DS_Store
 **/socialxpfarm-auth/
+__pycache__/
+*.pyc
+.venv/
+remote-login/.local/

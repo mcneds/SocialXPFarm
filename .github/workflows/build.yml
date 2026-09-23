@@ -13,7 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  companion-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.12', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install companion dependencies
+        run: python -m pip install -r remote-login/requirements.lock
+      - name: Test companion and developer scenarios
+        env:
+          PYTHONPATH: remote-login
+        run: |
+          python -m unittest discover -s remote-login/tests -v
+          python remote-login/dev_scenarios.py
+
   build:
+    needs: companion-tests
     runs-on: ubuntu-latest
 
     steps:
@@ -38,6 +58,16 @@ jobs:
           path: build/libs/socialxpfarm-*.jar
           if-no-files-found: error
 
+      - name: Package remote login companion
+        run: |
+          python3 remote-login/package_release.py build/SocialXPFarm-remote-login.zip
+
+      - name: Upload companion artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: socialxpfarm-remote-login
+          path: build/SocialXPFarm-remote-login.zip
+
       - name: Publish release
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
@@ -50,6 +80,7 @@ jobs:
           gh release delete latest-build --cleanup-tag -y || true
           gh release create latest-build \
             build/libs/SocialXPFarm-latest.jar \
+            build/SocialXPFarm-remote-login.zip \
             --target "$GITHUB_SHA" \
             --title "Latest Build" \
             --notes "Minecraft 26.2 / Fabric"

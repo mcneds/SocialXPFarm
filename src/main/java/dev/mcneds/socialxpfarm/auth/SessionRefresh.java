@@ -13,6 +13,9 @@ public final class SessionRefresh {
     public interface Backend {
         User refresh(RefreshTokenStore.Credential saved, Save save) throws Exception;
         User pair(User expected, Consumer<URI> browser, Save save) throws Exception;
+        default User pairDevice(User expected, String clientId, Consumer<DevicePrompt> display, Save save) throws Exception {
+            throw new AuthFailure(AuthFailure.Kind.LOCAL, "Phone sign-in is unavailable in this backend.");
+        }
     }
 
     private final RefreshTokenStore store;
@@ -27,6 +30,7 @@ public final class SessionRefresh {
     private boolean pairing;
     private Status status = Status.IDLE;
     private String message = "";
+    private DevicePrompt devicePrompt;
 
     public SessionRefresh(RefreshTokenStore store, Backend backend) {
         this(store, backend, System::nanoTime, action -> Thread.startVirtualThread(action));
@@ -71,6 +75,21 @@ public final class SessionRefresh {
             }
         }, save));
     }
+
+    public synchronized void pairDevice(User user, String clientId) {
+        cancel();
+        expected = user;
+        long operation = generation;
+        launch(true, save -> backend.pairDevice(user, clientId, prompt -> {
+            synchronized (this) {
+                if (operation != generation || Thread.currentThread().isInterrupted()) throw new CancellationException();
+                devicePrompt = prompt;
+            }
+        }, save));
+        message = "Waiting for Microsoft sign-in from your phone.";
+    }
+
+    public synchronized DevicePrompt devicePrompt() { return status == Status.RUNNING ? devicePrompt : null; }
 
     @FunctionalInterface private interface Work { User run(Save save) throws Exception; }
 
@@ -133,6 +152,7 @@ public final class SessionRefresh {
         if (task != null) task.cancel(true);
         task = null;
         result = null;
+        devicePrompt = null;
         expected = null;
         status = Status.IDLE;
         message = "";

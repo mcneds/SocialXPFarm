@@ -8,8 +8,13 @@ import java.util.*;
 
 /** One private credential file inside this Minecraft instance; never uses launcher credentials. */
 public final class RefreshTokenStore {
-    public record Credential(UUID uuid, String name, String refreshToken) {
+    public record Credential(UUID uuid, String name, String refreshToken, String clientId) {
+        public Credential(UUID uuid, String name, String refreshToken) {
+            this(uuid, name, refreshToken, MicrosoftAuthClient.CLIENT_ID);
+        }
         public Credential {
+            if (clientId == null) clientId = MicrosoftAuthClient.CLIENT_ID; // Migrate 1.2 credentials.
+            UUID.fromString(clientId);
             Objects.requireNonNull(uuid);
             if (name == null || name.isBlank() || refreshToken == null || refreshToken.isBlank())
                 throw new IllegalArgumentException("Incomplete saved account");

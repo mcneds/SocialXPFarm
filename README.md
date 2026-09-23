@@ -119,6 +119,16 @@ The refresh token is a login credential, stored **unencrypted** in this instance
 
 See the [authentication scenarios](docs/authentication-scenarios.md) for test coverage and the live two-alt checklist. Automated tests use synthetic credentials; real Microsoft/Hypixel renewal still needs live validation.
 
+## Sign in remotely from your phone
+
+Version **1.3.0** adds a shared Discord companion for instances on one Linux PC. When silent renewal needs your help, it sends a private DM identifying the instance and account. Tap **Sign in** to generate a fresh Microsoft device code, finish sign-in on your phone, and the instance reconnects automatically after verifying the account.
+
+Download `SocialXPFarm-remote-login.zip` alongside the mod from the [latest release](https://github.com/mcneds/SocialXPFarm/releases/tag/latest-build). Follow the [companion setup guide](remote-login/README.md) to create a bot, enter credentials locally, and register your instance directories. Only your configured Discord user can use the controls. No VPN or public incoming ports are required. Remote mode stays off until configured.
+
+Use Discord DMs for `/sxp status`, `/sxp login instance`, and `/sxp cancel instance`. These are separate from the in-game commands. Remote sign-in handles a current pending recovery; it does not switch healthy instances between accounts or enable automation remotely. Existing local login and silent refresh remain available.
+
+The Microsoft device endpoint and initial polling were checked with the default OAuth registration; full phone authentication and Discord delivery still require live validation with your accounts. See the [developer test guide](remote-login/DEVELOPMENT.md) for the automated suites and live acceptance checklist.
+
 ## Recovery verification
 
 `./gradlew build` runs regression tests for Hypixel address scoping, disconnect classification, queue/throttle notices, reconnect backoff, monotonic deadlines, OAuth callbacks/PKCE, token rotation, per-instance storage, renewal retries/cancellation, and account identity. Browser login and runtime Auth Me integration still require the [manual authentication checks](docs/authentication-scenarios.md).

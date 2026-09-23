@@ -147,4 +147,38 @@ class SessionRefreshTest {
         assertNull(runner.result());
         assertEquals(1, calls.get());
     }
+
+    @Test void devicePromptIsClearedByCancelAndLatePublicationIsRejected() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1), finished = new CountDownLatch(1);
+        AtomicBoolean rejected = new AtomicBoolean();
+        var backend = new SessionRefresh.Backend() {
+            public User refresh(RefreshTokenStore.Credential c, SessionRefresh.Save save) { throw new AssertionError(); }
+            public User pair(User user, Consumer<URI> browser, SessionRefresh.Save save) { throw new AssertionError(); }
+            public User pairDevice(User user, String clientId, Consumer<DevicePrompt> display, SessionRefresh.Save save) {
+                display.accept(new DevicePrompt("TEST-CODE", "https://microsoft.com/devicelogin", 100000));
+                entered.countDown();
+                while (release.getCount() > 0) {
+                    try { release.await(); } catch (InterruptedException ignored) { }
+                }
+                try { display.accept(new DevicePrompt("LATE-CODE", "https://microsoft.com/devicelogin", 200000)); }
+                catch (CancellationException e) { rejected.set(true); }
+                finally { finished.countDown(); }
+                return user(alt, "synthetic-new");
+            }
+        };
+        var runner = new SessionRefresh(store(), backend, clock::get, action -> Thread.startVirtualThread(action));
+        runner.pairDevice(original, MicrosoftAuthClient.CLIENT_ID);
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            assertNotNull(runner.devicePrompt());
+            runner.cancel();
+            assertNull(runner.devicePrompt());
+        } finally { release.countDown(); }
+        assertTrue(finished.await(5, TimeUnit.SECONDS));
+        runner.tick();
+        assertTrue(rejected.get());
+        assertEquals(SessionRefresh.Status.IDLE, runner.status());
+        assertNull(runner.result());
+        assertNull(runner.devicePrompt());
+    }
 }

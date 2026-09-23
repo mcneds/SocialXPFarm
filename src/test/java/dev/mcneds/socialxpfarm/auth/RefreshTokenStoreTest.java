@@ -14,6 +14,21 @@ class RefreshTokenStoreTest {
     private final UUID a = UUID.randomUUID();
     private final UUID b = UUID.randomUUID();
 
+    @Test void oldCredentialFilesAcquireTheOriginalOAuthClientId() throws Exception {
+        Path directory = Files.createDirectory(temp.resolve("auth"));
+        Files.writeString(directory.resolve("account.json"), "{\"uuid\":\"" + a + "\",\"name\":\"AltA\",\"refreshToken\":\"synthetic-old\"}");
+        var credential = new RefreshTokenStore(directory).load(a).orElseThrow();
+        assertEquals(MicrosoftAuthClient.CLIENT_ID, credential.clientId());
+        assertEquals("synthetic-old", credential.refreshToken());
+    }
+
+    @Test void explicitlyBoundOAuthClientSurvivesPersistence() throws Exception {
+        var store = new RefreshTokenStore(temp.resolve("auth"));
+        String clientId = UUID.randomUUID().toString();
+        store.save(new RefreshTokenStore.Credential(a, "AltA", "synthetic-secret", clientId));
+        assertEquals(clientId, store.load(a).orElseThrow().clientId());
+    }
+
     @Test void persistsRotationWithOwnerOnlyPermissionsAndNoTemporaryCopies() throws Exception {
         Path directory = temp.resolve("auth");
         var store = new RefreshTokenStore(directory);

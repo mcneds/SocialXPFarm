@@ -64,6 +64,7 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         config = loadConfig();
+        RemoteLoginBridge.INSTANCE.initialize();
         toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.socialxpfarm.toggle",
                 InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_F8,
                 KeyMapping.Category.register(Identifier.fromNamespaceAndPath(MOD_ID, "controls"))));
@@ -88,6 +89,11 @@ public final class SocialXPFarmClient implements ClientModInitializer {
     }
 
     private void tick(Minecraft client) {
+        tickAutomation(client);
+        RemoteLoginBridge.INSTANCE.tick(client, config != null && config.shouldRun() && config.autoReconnect);
+    }
+
+    private void tickAutomation(Minecraft client) {
         while (toggleKey.consumeClick()) setEnabled(client, !config.enabled);
         if (config == null || !config.shouldRun()) {
             connectionRecovery.reset(false);

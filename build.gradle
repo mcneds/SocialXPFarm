@@ -23,6 +23,7 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    systemProperty 'sxp.projectDir', project.projectDir.absolutePath
     workingDir = layout.buildDirectory.dir('test-runtime').get().asFile
     doFirst {
         workingDir.mkdirs()

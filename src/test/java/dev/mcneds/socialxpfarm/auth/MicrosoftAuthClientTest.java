@@ -145,4 +145,16 @@ class MicrosoftAuthClientTest {
                 "{\"error\":\"invalid_client\"}"));
         assertEquals(AuthFailure.Kind.LOCAL, assertThrows(AuthFailure.class, () -> client.refresh(saved, value -> {})).kind);
     }
+
+    @Test void renewalUsesTheClientIdBoundToTheSavedRefreshToken() throws Exception {
+        String clientId = UUID.randomUUID().toString();
+        var client = new MicrosoftAuthClient((endpoint, body, form, bearer) -> {
+            if (endpoint.equals(MicrosoftAuthClient.TOKEN)) assertEquals(clientId, OAuthCallback.parseQuery(body).get("client_id"));
+            return success(endpoint);
+        });
+        AtomicReference<RefreshTokenStore.Credential> rotated = new AtomicReference<>();
+        User result = client.refresh(new RefreshTokenStore.Credential(ALT, "Alt", "synthetic-old", clientId), rotated::set);
+        assertEquals(clientId, rotated.get().clientId());
+        assertEquals(ALT, result.getProfileId());
+    }
 }

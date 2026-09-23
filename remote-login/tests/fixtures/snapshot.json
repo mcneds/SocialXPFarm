@@ -1,0 +1,14 @@
+{
+  "runId": "00000000-0000-0000-0000-000000000003",
+  "context": "00000000-0000-0000-0000-000000000004",
+  "username": "AltA",
+  "accountId": "00000000-0000-0000-0000-000000000001",
+  "state": "signing_in",
+  "message": "Waiting for Microsoft sign-in from your phone.",
+  "canLogin": false,
+  "prompt": {
+    "userCode": "TEST-CODE",
+    "verificationUri": "https://microsoft.com/devicelogin",
+    "expiresAt": 2000000000000
+  }
+}
