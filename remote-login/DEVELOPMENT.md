@@ -19,6 +19,8 @@ From an extracted companion release:
 
 CI runs the companion tests/scenario runner on Python 3.12 and 3.14. Release publication waits for those checks and the Java build. Dependencies are pinned in `requirements.lock`; `requirements.in` lists direct dependencies. Update the pins together and run both Python versions when changing libraries.
 
+Linux CI requires `systemd-analyze`. Service tests validate generated units with `systemd-analyze verify`, including installation paths containing spaces and literal `%` characters. They use temporary files and an existing executable, without starting a service or contacting Discord. That validation test skips locally if systemd is unavailable; the output-format tests still run.
+
 ## Coverage layers
 
 | Layer | Scenarios |

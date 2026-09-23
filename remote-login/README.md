@@ -61,7 +61,9 @@ F8 or `/sxp off` cancels automatic/remote recovery, suppresses new recovery aler
 
 ## Start automatically on Linux
 
-After setup works manually, run these commands from this directory using its virtual environment:
+After setup works manually, open a terminal in the companion folder containing `sxp_remote/` and `.venv/`—the same folder where you ran `serve`. For example, if you extracted the release into `~/Code/SocialXPFarm-remote-login`, run `cd ~/Code/SocialXPFarm-remote-login/remote-login` first. For a repository checkout, use its `remote-login/` folder.
+
+Stop any manually running companion with **Ctrl+C** before starting the service. Then run:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -76,6 +78,17 @@ The generated unit uses the current virtual environment and absolute directory p
 systemctl --user status socialxpfarm-remote.service
 journalctl --user -u socialxpfarm-remote.service
 ```
+
+After updating the companion, regenerate an existing service from the updated companion folder and restart it:
+
+```bash
+.venv/bin/python -m sxp_remote service-unit > ~/.config/systemd/user/socialxpfarm-remote.service
+systemctl --user daemon-reload
+systemctl --user restart socialxpfarm-remote.service
+systemctl --user status socialxpfarm-remote.service --no-pager
+```
+
+This also replaces the incorrectly quoted `WorkingDirectory` emitted by the original 1.3.0 companion, which caused a “bad unit file setting” error. No manual service-file editing is needed. Regeneration preserves your bot credentials and instance registrations. Use the same `--config` option when regenerating if you originally selected a custom configuration path.
 
 ## Recovery and troubleshooting
 

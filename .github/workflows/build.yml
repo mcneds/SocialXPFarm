@@ -29,6 +29,7 @@ jobs:
         env:
           PYTHONPATH: remote-login
         run: |
+          command -v systemd-analyze
           python -m unittest discover -s remote-login/tests -v
           python remote-login/dev_scenarios.py
 
