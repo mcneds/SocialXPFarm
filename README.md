@@ -1,5 +1,7 @@
 # SocialXPFarm
 
+**NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
+
 Client-side Fabric **26.2** mod with toggleable recovery to your own Hypixel SkyBlock island or a configured player's island.
 
 ## Install and start
@@ -130,6 +132,8 @@ Use Discord DMs for `/sxp status`, `/sxp login instance`, and `/sxp cancel insta
 The callback form carries a short-lived authorization code through Discord; reusable tokens and the PKCE verifier stay on the Minecraft instance. Full phone authentication and recovery still require live validation with your accounts. See the [developer test guide](remote-login/DEVELOPMENT.md) for the automated suites and live acceptance checklist.
 
 Use **`/sxp email instance address`** in the owner-only bot DM to set the Microsoft email reminder displayed for each instance. Sign-in messages show this email beside the Minecraft username and link to Microsoft’s account picker. Email hints do not replace Minecraft UUID verification.
+
+The **1.4.0 candidate** adds an optional HTTPS callback for browser-only phone sign-in, using your own Microsoft registration and a Cloudflare Tunnel to the companion PC. See [setup, compatibility verification, and rollback](remote-login/BROWSER-LOGIN.md). This remains disabled until configured; live registration verification is required before migration.
 
 ## Recovery verification
 

@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from aiohttp import web
 
-from .core import Registry
+from .core import Registry, browser_parameters
 from .notifications import Notifications, MissingMessage
 
 LOG = logging.getLogger('sxp_remote')
@@ -39,9 +39,12 @@ def authorized(registry, interaction):
 
 
 class Controls(discord.ui.View):
-    def __init__(self, bot, instance_id, context, login=True, cancel=False, can_callback=False):
+    def __init__(self, bot, instance_id, context, login=True, cancel=False, can_callback=False, show_callback=True):
         super().__init__(timeout=None)
-        for action, label, enabled in [('login', 'Sign in', login), ('cancel', 'Cancel', cancel), ('callback', 'Paste callback', can_callback)]:
+        actions = [('login', 'Sign in', login), ('cancel', 'Cancel', cancel)]
+        if show_callback:
+            actions.append(('callback', 'Paste callback', can_callback))
+        for action, label, enabled in actions:
             button = discord.ui.Button(label=label, custom_id=f'sxp:{action}:{instance_id}:{context}',
                                        style=discord.ButtonStyle.primary if action == 'login' else discord.ButtonStyle.secondary,
                                        disabled=not enabled)
@@ -108,10 +111,18 @@ class Delivery:
             'cancelled': 'Phone sign-in cancelled. You may request a new code.',
             'failed': 'Authentication setup or session installation failed. Check the instance log; desktop sign-in remains available.'
         }.get(phase, 'Status unavailable.')
+        if phase == 'failed' and state.get('message') == 'Minecraft rejected this Microsoft application registration. Verify Minecraft API access before enabling HTTPS sign-in.':
+            text += '\nMinecraft rejected the configured Microsoft application. Verify its Minecraft API access before migrating more instances.'
         view = None
+        hosted = bool(prompt and 'authorizationUri' in prompt and browser_parameters(prompt).get('response_mode') == 'form_post')
         if online and state.get('context'):
-            view = Controls(self.bot, instance.id, state['context'], state.get('canLogin', False), phase == 'signing_in', bool(prompt and 'authorizationUri' in prompt))
-        if prompt and 'authorizationUri' in prompt:
+            view = Controls(self.bot, instance.id, state['context'], state.get('canLogin', False), phase == 'signing_in', bool(prompt and 'authorizationUri' in prompt and not hosted), show_callback=not hosted)
+        if hosted:
+            text += (f"\n[Choose Microsoft account]({prompt['authorizationUri']}) — expires <t:{prompt['expiresAt'] // 1000}:R>."
+                     '\nChoose the Microsoft account for this instance, using **Use another account** if needed. '
+                     'The browser will confirm when the Minecraft account is verified; this message updates automatically.'
+                     '\nEnter your password only on Microsoft’s website.')
+        elif prompt and 'authorizationUri' in prompt:
             text += (f"\n[Choose Microsoft account]({prompt['authorizationUri']}) — expires <t:{prompt['expiresAt'] // 1000}:R>."
                      '\nSelect the Microsoft account for this Minecraft instance; use **Use another account** if needed.'
                      '\nOn your phone, the final **localhost** page may say it cannot connect. This is expected. '
@@ -250,7 +261,10 @@ class Bot(discord.Client):
             await interaction.response.send_message('Only the configured owner can use this form in a DM.', ephemeral=True)
             return
         try:
-            self.registry.callback_request(interaction.user.id, instance_id, context)
+            prompt = self.registry.callback_request(interaction.user.id, instance_id, context)
+            if browser_parameters(prompt).get('response_mode') == 'form_post':
+                await interaction.response.send_message('This sign-in finishes automatically in your browser. No callback form is needed.', ephemeral=True)
+                return
         except (ValueError, PermissionError) as error:
             await interaction.response.send_message(str(error), ephemeral=True)
             return
@@ -294,13 +308,22 @@ class Bot(discord.Client):
 async def serve(config, state_path, config_path=None):
     registry = Registry(config, state_path=state_path, config_path=config_path)
     runner = web.AppRunner(make_http(registry), access_log=None)
-    await runner.setup()
+    callback_runner = None
     bot = Bot(registry)
     try:
+        await runner.setup()
         await web.TCPSite(runner, '127.0.0.1', config['port']).start()
+        if registry.browser_callback:
+            from .callback_web import make_callback_http
+            callback_runner = web.AppRunner(make_callback_http(registry), access_log=None)
+            await callback_runner.setup()
+            await web.TCPSite(callback_runner, '127.0.0.1', registry.browser_callback['port']).start()
         async with bot:
             await bot.start(config['botToken'])
     finally:
+        await bot.close()
+        if callback_runner:
+            await callback_runner.cleanup()
         await runner.cleanup()
 
 

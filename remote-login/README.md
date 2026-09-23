@@ -1,8 +1,14 @@
 # Phone sign-in with Discord
 
+**NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
+
 This companion runs on the **same Linux PC as your Minecraft instances**. It sends private Discord DMs when an instance needs Microsoft sign-in. You tap **Sign in**, choose the correct Microsoft account in the browser, and paste the final callback address into a private Discord form. The instance resumes recovery after verifying the account.
 
 Normal refresh-token renewal stays automatic. The form passes a short-lived, single-use authorization code through Discord and the local companion. The PKCE verifier, access tokens, and refresh tokens stay on the Minecraft instance; passwords are entered only on Microsoft’s website. Callback addresses are never written to the companion’s configuration/state files or echoed in chat. Discord processes form submissions, so treat the callback as sensitive and submit it only to your own bot.
+
+## Optional browser-only sign-in
+
+The **1.4.0 candidate** supports a registered HTTPS callback through Cloudflare Tunnel, so a phone can finish sign-in without copying a localhost address. This is opt-in and requires a Microsoft application you control. Follow the [browser-only setup and compatibility check](BROWSER-LOGIN.md); verify a full Minecraft login on one instance before migration. Existing desktop, device-code and callback-form flows remain available.
 
 ## Install
 

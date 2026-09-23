@@ -114,4 +114,17 @@ class RemoteLoginBridgeTest {
         assertFalse(RemoteLoginBridge.permitted(expired, command, 1000));
     }
 
+    @Test void httpsFixtureAndRemoteConfigurationRequireExplicitRegistration() throws Exception {
+        String json = Files.readString(Path.of(System.getProperty("sxp.projectDir"), "remote-login/tests/fixtures/https-snapshot.json"));
+        Gson gson = new Gson();
+        var snapshot = gson.fromJson(json, RemoteLoginBridge.Snapshot.class);
+        assertEquals(com.google.gson.JsonParser.parseString(json), gson.toJsonTree(snapshot));
+        String redirect = "https://auth.example.test/oauth/callback";
+        assertThrows(IllegalArgumentException.class, () -> new RemoteLoginBridge.Config(true, run, "a".repeat(43), 38471, null, redirect));
+        var configured = new RemoteLoginBridge.Config(true, run, "a".repeat(43), 38471, context, redirect);
+        assertEquals(redirect, configured.redirectUri());
+        assertFalse(configured.toString().contains("a".repeat(43)));
+        assertNull(new RemoteLoginBridge.Config(true, run, "a".repeat(43), 38471, null).redirectUri());
+    }
+
 }

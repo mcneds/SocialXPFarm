@@ -37,13 +37,19 @@ final class RemoteLoginBridge {
         }
         @Override public String toString() { return "RemoteCommand[action=" + action + ", callback=REDACTED]"; }
     }
-    record Config(boolean enabled, String instanceId, String secret, int port, String clientId) {
+    record Config(boolean enabled, String instanceId, String secret, int port, String clientId, String redirectUri) {
+        Config(boolean enabled, String instanceId, String secret, int port, String clientId) {
+            this(enabled, instanceId, secret, port, clientId, null);
+        }
         Config {
             UUID.fromString(instanceId);
             if (secret == null || !secret.matches("[A-Za-z0-9_-]{32,128}")) throw new IllegalArgumentException();
             if (port < 1024 || port > 65535) throw new IllegalArgumentException();
             if (clientId == null) clientId = MicrosoftAuthClient.CLIENT_ID;
             UUID.fromString(clientId);
+            dev.mcneds.socialxpfarm.auth.BrowserLogin.validateRedirect(redirectUri);
+            if (redirectUri != null && clientId.equals(MicrosoftAuthClient.CLIENT_ID))
+                throw new IllegalArgumentException("HTTPS callback needs your own Microsoft registration");
         }
         @Override public String toString() { return "RemoteConfig[credentials=REDACTED]"; }
     }
@@ -75,6 +81,7 @@ final class RemoteLoginBridge {
 
     boolean enabled() { return config != null; }
     String clientId() { return config.clientId(); }
+    String redirectUri() { return config.redirectUri(); }
 
     void tick(Minecraft client, boolean enabled) {
         ConnectionRecovery recovery = ConnectionRecovery.INSTANCE;
@@ -88,7 +95,7 @@ final class RemoteLoginBridge {
             if (!command.id().equals(handled) && permitted(current, command, System.currentTimeMillis())) {
                 if (command.action().equals("test")) {
                     cancelTest();
-                    testSession = new PhoneLoginSession(AutomaticLogin.create(), client.getUser(), clientId());
+                    testSession = new PhoneLoginSession(AutomaticLogin.create(), client.getUser(), clientId(), redirectUri());
                 }
                 else if (testSession != null) testSession.command(command.context(), command.action(), command.callback());
                 else recovery.remoteCommand(client, command.context(), command.action(), command.callback());

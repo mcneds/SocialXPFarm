@@ -8,12 +8,18 @@ public final class PhoneLoginSession {
     private final SessionRefresh refresh;
     private final User expected;
     private final String clientId;
+    private final String redirectUri;
     private String context = UUID.randomUUID().toString();
     private String state = "needs_login";
     private String message = "Open the bot DM on your phone and tap Sign in.";
     private boolean closed;
 
     public PhoneLoginSession(SessionRefresh refresh, User expected, String clientId) {
+        this(refresh, expected, clientId, null);
+    }
+
+    public PhoneLoginSession(SessionRefresh refresh, User expected, String clientId, String redirectUri) {
+        this.redirectUri = redirectUri;
         this.refresh = refresh;
         this.expected = expected;
         this.clientId = clientId;
@@ -48,7 +54,7 @@ public final class PhoneLoginSession {
         if (action.equals("login") && canLogin()) {
             context = UUID.randomUUID().toString();
             state = "signing_in";
-            refresh.pairBrowser(expected, clientId);
+            refresh.pairBrowser(expected, clientId, redirectUri);
             message = "Waiting for Microsoft sign-in from your phone.";
         } else if (action.equals("callback") && state.equals("signing_in")) {
             refresh.submitCallback(callback);

@@ -216,7 +216,7 @@ public final class ConnectionRecovery {
         if (action.equals("login") && (status == SessionRefresh.Status.NEEDS_LOGIN || status == SessionRefresh.Status.IDLE)) {
             remoteContext = java.util.UUID.randomUUID().toString();
             remotePhase = "signing_in";
-            automaticLogin.pairBrowser(rejectedUser, RemoteLoginBridge.INSTANCE.clientId());
+            automaticLogin.pairBrowser(rejectedUser, RemoteLoginBridge.INSTANCE.clientId(), RemoteLoginBridge.INSTANCE.redirectUri());
         } else if (action.equals("callback") && remotePhase.equals("signing_in")) {
             automaticLogin.submitCallback(callback);
         } else if (action.equals("cancel") && remotePhase.equals("signing_in")) {

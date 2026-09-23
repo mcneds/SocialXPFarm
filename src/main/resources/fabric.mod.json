@@ -3,7 +3,7 @@
   "id": "socialxpfarm",
   "version": "${version}",
   "name": "SocialXPFarm",
-  "description": "Toggle Hypixel SkyBlock recovery to your own island or a configured guest island after kicks and transfers.",
+  "description": "Toggle Hypixel SkyBlock recovery to your own island or a configured guest island after kicks and transfers.\n\nNOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.",
   "authors": [
     "mcneds"
   ],

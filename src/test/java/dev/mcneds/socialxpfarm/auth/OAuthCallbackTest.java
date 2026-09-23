@@ -107,4 +107,50 @@ class OAuthCallbackTest {
         }
     }
 
+    @Test void httpsCallbackUsesRegisteredRedirectAndFormPostWithoutLoopbackListener() throws Exception {
+        String redirect = "https://auth.example.test/oauth/callback";
+        try (var callback = new OAuthCallback(java.util.UUID.randomUUID().toString(), redirect)) {
+            var fields = parse(callback);
+            assertEquals(redirect, callback.redirect());
+            assertEquals(redirect, fields.get("redirect_uri"));
+            assertEquals("form_post", fields.get("response_mode"));
+            assertEquals("select_account", fields.get("prompt"));
+            assertEquals("S256", fields.get("code_challenge_method"));
+            assertFalse(fields.containsKey("code_verifier"));
+            String query = "?state=" + callback.state + "&code=synthetic-https";
+            assertFalse(callback.submit("http://localhost:12345/callback" + query));
+            assertFalse(callback.submit("https://other.example.test/oauth/callback" + query));
+            assertFalse(callback.submit(redirect + query + "&state=duplicate"));
+            assertTrue(callback.submit(redirect + query));
+            assertFalse(callback.submit(redirect + query));
+            assertEquals("synthetic-https", callback.awaitCode());
+        }
+    }
+
+    private java.util.Map<String, String> parse(OAuthCallback callback) {
+        return OAuthCallback.parseQuery(callback.authorizeUri().getRawQuery());
+    }
+
+    @Test void unsafeHostedRedirectsAreRejectedBeforeAuthorization() {
+        for (String redirect : new String[]{"http://auth.example.test/oauth/callback", "https://localhost/oauth/callback",
+                "https://127.0.0.1/oauth/callback", "https://auth.example.test:443/oauth/callback",
+                "https://user@auth.example.test/oauth/callback", "https://auth.example.test/oauth/callback?extra=1",
+                "https://auth.example.test/oauth/callback#fragment", "https://auth.example.test/wrong"}) {
+            assertThrows(IllegalArgumentException.class, () -> new OAuthCallback(MicrosoftAuthClient.CLIENT_ID, redirect));
+        }
+    }
+
+    @Test void httpsCallbacksRespectMonotonicExpiryAndCancellation() throws Exception {
+        var clock = new java.util.concurrent.atomic.AtomicLong();
+        try (var callback = new OAuthCallback(java.util.UUID.randomUUID().toString(), "https://auth.example.test/oauth/callback", clock::get)) {
+            clock.set(300_000_000_000L);
+            assertFalse(callback.submit(callback.redirect() + "?state=" + callback.state + "&code=late"));
+            assertNull(callback.prompt());
+            assertThrows(AuthFailure.class, callback::awaitCode);
+        }
+        var callback = new OAuthCallback(java.util.UUID.randomUUID().toString(), "https://auth.example.test/oauth/callback");
+        callback.close();
+        assertFalse(callback.submit(callback.redirect() + "?state=" + callback.state + "&code=late"));
+    }
+
 }
