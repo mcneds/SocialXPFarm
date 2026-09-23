@@ -33,6 +33,7 @@ Linux CI requires `systemd-analyze`. Service tests validate generated units with
 | Companion state machine | Owner allowlist, per-instance bearer isolation, acknowledgements/retries, duplicate clicks, concurrent alts, restarts, active duplicate processes, stale heartbeats, expired commands, process/context/account changes. |
 | Local HTTP | Real loopback HTTP exchange, authorization failures, invalid JSON/schema, body limits, browser Origin rejection, Host validation, unsupported routes/methods. |
 | Discord adapter | Fake interactions, owner/DM-only enforcement, early deferral, selected-instance routing, stale buttons, persistent component IDs and SDK constraints, safe rendering. |
+| Account email hints | Optional configuration migration, owner/DM-only set/view/clear, independent hints per instance, protected persistence and write failure rollback, updated request text without duplicate alerts, browser guidance with unchanged Microsoft verification URLs. |
 | Notification reconciliation | One alert per request, updates instead of repeated alerts, blocked DMs/outages, expiry/offline code removal, restart deduplication, deleted messages, terminal states and independent alts. |
 | Local tooling | Wizard creates independent secrets, reruns preserve identity, owner-only atomic writes, symlink rejection, systemd unit generation, credential-free release packaging. |
 

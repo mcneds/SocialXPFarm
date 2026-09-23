@@ -8,7 +8,7 @@ import time
 from urllib.parse import urlparse
 import uuid
 
-from .config import private_write
+from .config import private_write, load, login_email
 
 STATES = {'idle', 'disabled', 'renewing', 'needs_login', 'signing_in', 'signed_in', 'restored', 'cancelled', 'failed', 'paired'}
 SNAPSHOT_KEYS = {'runId', 'context', 'username', 'accountId', 'state', 'message', 'canLogin', 'prompt', 'canTest'}
@@ -57,6 +57,7 @@ class Instance:
     id: str
     label: str
     secret: str = field(repr=False)
+    login_email: str = field(default='', repr=False)
     snapshot: dict | None = field(default=None, repr=False)
     seen: float = float('-inf')
     command: dict | None = field(default=None, repr=False)
@@ -64,10 +65,11 @@ class Instance:
 
 
 class Registry:
-    def __init__(self, config, clock=time.monotonic, wall=time.time, state_path: Path | None = None):
+    def __init__(self, config, clock=time.monotonic, wall=time.time, state_path: Path | None = None, config_path: Path | None = None):
         self.owner = int(config['ownerId'])
-        self.instances = {i['id']: Instance(i['id'], i['label'], i['secret']) for i in config['instances']}
+        self.instances = {i['id']: Instance(i['id'], i['label'], i['secret'], login_email=i.get('loginEmail', '')) for i in config['instances']}
         self.clock, self.wall, self.state_path = clock, wall, state_path
+        self.config_path = config_path
         self.messages = {}
         if state_path and state_path.exists():
             if state_path.is_symlink():
@@ -94,6 +96,29 @@ class Registry:
         if matches:
             raise ValueError('Multiple instances have that label. Select an autocomplete entry or copy its ID from /sxp status.')
         raise ValueError('Unknown instance. Select an autocomplete entry, type its exact label, or copy its ID from /sxp status.')
+
+    def set_login_email(self, owner, instance_id, value):
+        if owner != self.owner:
+            raise PermissionError('Only the configured owner may update account hints')
+        email = login_email(value)
+        instance = self.instances.get(instance_id)
+        if instance is None:
+            raise ValueError('Unknown instance')
+        if self.config_path is None:
+            raise ValueError('Configuration path unavailable; update the companion startup command')
+        # Read the protected file afresh so editing one hint preserves all other configuration.
+        config = load(self.config_path)
+        if int(config['ownerId']) != self.owner:
+            raise ValueError('Configuration owner changed; restart the companion')
+        item = next((i for i in config['instances'] if i['id'] == instance.id), None)
+        if item is None:
+            raise ValueError('Instance configuration changed; restart the companion')
+        if email:
+            item['loginEmail'] = email
+        else:
+            item.pop('loginEmail', None)
+        private_write(self.config_path, config)
+        instance.login_email = email
 
     def exchange(self, instance, body):
         if not isinstance(body, dict) or set(body) - {'runId', 'ack', 'snapshot'}:

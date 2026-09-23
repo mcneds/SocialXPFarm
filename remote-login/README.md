@@ -55,6 +55,16 @@ The default local endpoint is `127.0.0.1:38471`. If it is occupied, stop the con
 - The DM updates to **Signed in; reconnecting**, then **Destination restored** when the existing island check succeeds.
 - Use **Cancel** or **`/sxp cancel instance`** to cancel an active phone login. Codes that expire or are declined require another deliberate click; the bot does not keep generating codes while you are busy.
 
+### Identify the right Microsoft account
+
+In the bot DM, use **`/sxp email`**, select an instance, and enter its Microsoft sign-in email in the `address` field. For example: `/sxp email instance:main address:alt@example.com`. Omit `address` to view its current hint, or enter `clear` to remove it. Only the configured owner can use this command, only in DMs. Instances can be offline while you configure their hints.
+
+The bot shows this email next to the Minecraft username in sign-in messages, including already-open requests. Hints persist in the companion's owner-only configuration as each instance's optional `loginEmail` field; no restart is needed when using the Discord command. You can also edit that field locally and restart the companion. Emails are user-configured reminders, not automatically discovered or verified Microsoft identities. Update the hint if you change an instance's account. The Minecraft UUID check still rejects another account before saving its credentials.
+
+If Microsoft's page selects a cached account, choose **Use another account** or **Sign in with a different account**. For a fresh browser session, copy the Microsoft link into a **Private/Incognito** window on your phone. Close existing private tabs first when switching alts, since private tabs can share a session. Enter the code and use the email shown in the DM.
+
+A Discord link cannot reliably force private browsing or clear Microsoft's cookies. Microsoft's [device-code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code) does not document account-picker parameters for its verification link, so the companion keeps the provider's URL unchanged. `prompt=select_account` belongs to the [authorization-code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow), not a supported switch on this device-login link. See [Chrome's private browsing instructions](https://support.google.com/chrome/answer/95464) for session behavior.
+
 `/sxp login` handles a current pending authentication request. It does not change accounts in a healthy connected instance or enable disabled automation. `/sxp auth login` inside Minecraft still provides desktop setup. With remote mode configured, rejected sessions wait for your Discord action instead of launching the PC browser automatically.
 
 `idle` in `/sxp status` means the instance is reporting and has no pending authentication recovery; it does not confirm island arrival or XP farming. Using `/sxp login` then points you to `/sxp test`. A “stale” button instead belongs to an authentication request that is no longer current.

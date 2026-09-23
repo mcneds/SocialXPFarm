@@ -16,7 +16,7 @@ def main():
             print(unit(args.config), end='')
         else:
             from .app import run
-            run(load(args.config), args.config.parent / 'state.json')
+            run(load(args.config), args.config.parent / 'state.json', args.config)
     except (ValueError, OSError, KeyError):
         parser.exit(1, 'Configuration/setup failed. Check the local file, permissions and required values.\n')
 

@@ -69,6 +69,10 @@ class Delivery:
         name = discord.utils.escape_markdown(instance.label)
         username = discord.utils.escape_markdown(state.get('username', 'unknown'))
         text = f'**{name}** — Minecraft account **{username}**\n'
+        if instance.login_email:
+            text += f'**Microsoft email to use (configured): {discord.utils.escape_markdown(instance.login_email)}**\n'
+        else:
+            text += 'Microsoft email hint not set. Use `/sxp email` to set it for this instance.\n'
         phase = state.get('state') if online else 'offline'
         text += {
             'offline': 'Instance unavailable. Check its PC before signing in.',
@@ -89,6 +93,8 @@ class Delivery:
         if prompt:
             text += (f"\nOpen {prompt['verificationUri']} and enter **`{prompt['userCode']}`**."
                      f"\nExpires <t:{prompt['expiresAt'] // 1000}:R>. Select **{username}**'s Microsoft account."
+                     '\nIf Microsoft shows another account, choose **Use another account** (or **Sign in with a different account**).'
+                     '\nTo avoid the saved browser account, copy the link into a fresh **Private/Incognito** session. Close previous private tabs first when switching alts. Discord cannot force private mode.'
                      '\nEnter your password only on Microsoft’s website. Never send it to this bot.')
         return text, view
 
@@ -147,6 +153,10 @@ class Bot(discord.Client):
         async def test(interaction: discord.Interaction, instance: str):
             await self.named_action(interaction, instance, 'test')
 
+        @group.command(name='email', description='Show or set an instance email reminder; use address clear to remove it')
+        async def email(interaction: discord.Interaction, instance: str, address: str | None = None):
+            await self.email_action(interaction, instance, address)
+
         async def complete(interaction, current):
             if not authorized(registry, interaction):
                 return []
@@ -156,6 +166,7 @@ class Bot(discord.Client):
         login.autocomplete('instance')(complete)
         cancel.autocomplete('instance')(complete)
         test.autocomplete('instance')(complete)
+        email.autocomplete('instance')(complete)
         self.tree.add_command(group)
         self.notification_task = None
 
@@ -184,6 +195,28 @@ class Bot(discord.Client):
         context = (instance.snapshot or {}).get('context', '')
         await self.action(interaction, instance.id, context, action)
 
+    async def email_action(self, interaction, instance_id, address=None):
+        if not authorized(self.registry, interaction):
+            await interaction.response.send_message('Only the configured owner can update account hints in a DM.', ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            instance = self.registry.resolve_instance(instance_id)
+            if address is not None:
+                value = '' if address.strip().casefold() == 'clear' else address
+                self.registry.set_login_email(interaction.user.id, instance.id, value)
+            name = discord.utils.escape_markdown(instance.label)
+            if instance.login_email:
+                message = (f'**{name}** — Microsoft email reminder: **{discord.utils.escape_markdown(instance.login_email)}**.'
+                           '\nThis is your configured hint. The mod still verifies the Minecraft account UUID after sign-in.')
+            else:
+                message = f'**{name}** has no email hint. Use `/sxp email` with an address to set one.'
+        except (ValueError, PermissionError) as error:
+            message = str(error)
+        except OSError:
+            message = 'Could not save the email hint. Check companion configuration permissions.'
+        await interaction.followup.send(message, allowed_mentions=discord.AllowedMentions.none())
+
     async def action(self, interaction, instance_id, context, action):
         if not authorized(self.registry, interaction):
             await interaction.response.send_message('Only the configured owner can use these controls in a DM.', ephemeral=True)
@@ -207,8 +240,8 @@ class Bot(discord.Client):
         await super().close()
 
 
-async def serve(config, state_path):
-    registry = Registry(config, state_path=state_path)
+async def serve(config, state_path, config_path=None):
+    registry = Registry(config, state_path=state_path, config_path=config_path)
     runner = web.AppRunner(make_http(registry), access_log=None)
     await runner.setup()
     bot = Bot(registry)
@@ -220,10 +253,10 @@ async def serve(config, state_path):
         await runner.cleanup()
 
 
-def run(config, state_path):
+def run(config, state_path, config_path=None):
     logging.basicConfig(level=logging.WARNING)
     try:
-        asyncio.run(serve(config, state_path))
+        asyncio.run(serve(config, state_path, config_path))
     except KeyboardInterrupt:
         pass
     except Exception:

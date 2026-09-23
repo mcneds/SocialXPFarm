@@ -129,6 +129,8 @@ Use Discord DMs for `/sxp status`, `/sxp login instance`, and `/sxp cancel insta
 
 The Microsoft device endpoint and initial polling were checked with the default OAuth registration; full phone authentication and Discord delivery still require live validation with your accounts. See the [developer test guide](remote-login/DEVELOPMENT.md) for the automated suites and live acceptance checklist.
 
+Use **`/sxp email instance address`** in the owner-only bot DM to set the Microsoft email reminder displayed for each instance. Sign-in messages explain how to choose another account or use a fresh Private/Incognito browser session when Microsoft selects a cached account. Email hints do not replace Minecraft UUID verification.
+
 ## Recovery verification
 
 `./gradlew build` runs regression tests for Hypixel address scoping, disconnect classification, queue/throttle notices, reconnect backoff, monotonic deadlines, OAuth callbacks/PKCE, token rotation, per-instance storage, renewal retries/cancellation, and account identity. Browser login and runtime Auth Me integration still require the [manual authentication checks](docs/authentication-scenarios.md).

@@ -2,6 +2,7 @@
 import getpass
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import tempfile
@@ -9,6 +10,15 @@ import uuid
 
 DEFAULT_PATH = Path.home() / '.config' / 'socialxpfarm-remote' / 'config.json'
 DEFAULT_CLIENT = 'e16699bb-2aa8-46da-b5e3-45cbcce29091'
+
+
+def login_email(value):
+    if not isinstance(value, str):
+        raise ValueError('Enter an email address, or leave the hint empty')
+    value = value.strip()
+    if value and (len(value) > 254 or not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_{}|~-]+@[A-Za-z0-9.-]+", value)):
+        raise ValueError('Enter a valid email address without spaces')
+    return value
 
 
 def private_write(path: Path, value: dict):
@@ -49,6 +59,8 @@ def load(path: Path):
             raise ValueError('Invalid or duplicate instance')
         if not isinstance(item['label'], str) or not 1 <= len(item['label']) <= 64:
             raise ValueError('Invalid instance label')
+        if 'loginEmail' in item:
+            item['loginEmail'] = login_email(item['loginEmail'])
         seen.add(item['id'])
     return config
 

@@ -21,7 +21,7 @@ class Notifications:
             if prompt and prompt['expiresAt'] <= self.registry.wall() * 1000:
                 prompt = None
             stamp = (online, snapshot.get('context'), snapshot.get('state'), snapshot.get('canLogin'),
-                     snapshot.get('username'), snapshot.get('accountId'), tuple(sorted(prompt.items())) if prompt else None)
+                     snapshot.get('username'), snapshot.get('accountId'), instance.login_email, tuple(sorted(prompt.items())) if prompt else None)
             meta = self.registry.messages.get(instance.id, {})
             notify = online and snapshot.get('context') and snapshot.get('state') in {'needs_login', 'failed'}
             new_alert = notify and meta.get('notifiedContext') != snapshot['context']
