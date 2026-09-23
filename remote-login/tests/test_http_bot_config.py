@@ -87,6 +87,16 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.registry.instances[INSTANCE_B].command)
         interaction.followup.send.assert_awaited_once()
 
+    async def test_idle_slash_login_reports_no_pending_recovery_without_queuing_work(self):
+        publish(self.registry, value=snapshot('idle', context='', canLogin=False))
+        interaction = self.interaction()
+        await self.bot.named_action(interaction, INSTANCE_A, 'login')
+        interaction.response.defer.assert_awaited_once()
+        response = interaction.followup.send.call_args.args[0]
+        self.assertIn('No authentication recovery is pending', response)
+        self.assertNotIn('stale', response)
+        self.assertIsNone(self.registry.instances[INSTANCE_A].command)
+
     async def test_stale_button_reports_error_without_restarting_login(self):
         interaction = self.interaction()
         await self.bot.action(interaction, INSTANCE_A, str(uuid.uuid4()), 'login')

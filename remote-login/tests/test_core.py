@@ -51,6 +51,15 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(action=action), self.assertRaises(ValueError):
                 self.registry.command(OWNER, INSTANCE_A, context, action)
 
+    def test_idle_without_context_reports_no_pending_recovery_but_rejects_old_buttons_as_stale(self):
+        publish(self.registry, value=snapshot('idle', context='', canLogin=False))
+        for action in ('login', 'cancel'):
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, 'No authentication recovery is pending'):
+                self.registry.command(OWNER, INSTANCE_A, '', action)
+        with self.assertRaisesRegex(ValueError, 'stale'):
+            self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'login')
+        self.assertIsNone(self.instance.command)
+
     def test_cancel_is_only_for_phone_login(self):
         with self.assertRaises(ValueError):
             self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'cancel')

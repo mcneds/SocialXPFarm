@@ -111,6 +111,8 @@ class Registry:
         if not instance or not self.online(instance):
             raise ValueError('Instance is offline; check its PC')
         snapshot = instance.snapshot
+        if not context and not snapshot['context']:
+            raise ValueError('No authentication recovery is pending. Remote sign-in becomes available when this instance requires Microsoft sign-in.')
         if not context or context != snapshot['context']:
             raise ValueError('This button is stale; use /sxp status for the current request')
         if action == 'login':

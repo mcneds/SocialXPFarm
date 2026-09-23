@@ -57,6 +57,8 @@ The default local endpoint is `127.0.0.1:38471`. If it is occupied, stop the con
 
 Remote sign-in is available only for a current pending authentication recovery. It does not change accounts in a healthy connected instance or enable disabled automation. `/sxp auth login` inside Minecraft still provides desktop setup. With remote mode configured, rejected sessions wait for your Discord action instead of launching the PC browser automatically.
 
+`idle` in `/sxp status` means the instance is reporting and has no pending authentication recovery; it does not confirm island arrival or XP farming. Using `/sxp login` then reports “No authentication recovery is pending.” It cannot force a phone sign-in while idle. A “stale” button instead belongs to an authentication request that is no longer current.
+
 F8 or `/sxp off` cancels automatic/remote recovery, suppresses new recovery alerts, and leaves status reporting available. Saved login credentials remain available for later use. `/sxp auth forget` removes the Minecraft refresh credential; disabling/removing remote integration is separate: set `enabled` to `false` in that instance's `remote.json` and restart it.
 
 ## Start automatically on Linux
