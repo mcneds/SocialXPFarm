@@ -63,7 +63,7 @@ The default local endpoint is `127.0.0.1:38471`. If it is occupied, stop the con
 
 1. Update both the companion and the mod to the same release, restart the companion service, and restart each updated Minecraft instance. Old mods cannot accept this test command.
 2. Keep the selected instance connected to Hypixel with automation, its destination, `autoReconnect`, Auth Me, and remote integration enabled. `/sxp status` should show **phone test available**.
-3. In the bot DM, run **`/sxp test`** and select the instance with autocomplete. No in-game command is needed.
+3. In the bot DM, run **`/sxp test`** and select the instance with autocomplete or type its exact label, such as `main`. Labels ignore case and surrounding spaces. If labels are duplicated, select the autocomplete entry (which shows part of its ID) or paste the full ID from `/sxp status`. No in-game command is needed.
 4. The bot sends a sign-in request. Tap **Sign in**, open Microsoft's link on your phone, enter the code, and select that alt's Microsoft account.
 5. Expect **Phone sign-in verified; automatic renewal saved** and status **paired**. You can run another test from Discord afterward.
 

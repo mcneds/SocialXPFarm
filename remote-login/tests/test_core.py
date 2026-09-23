@@ -27,6 +27,22 @@ class ProtocolTests(unittest.TestCase):
             self.registry.command(OWNER + 1, INSTANCE_A, CONTEXT_A, 'login')
         self.assertIsNone(self.instance.command)
 
+    def test_instance_lookup_accepts_exact_labels_or_ids_and_rejects_ambiguous_labels(self):
+        for value in (INSTANCE_A, 'Alt A', '  aLt a  '):
+            self.assertIs(self.instance, self.registry.resolve_instance(value))
+        self.registry.instances[INSTANCE_B].label = 'ALT A'
+        with self.assertRaisesRegex(ValueError, 'Multiple instances'):
+            self.registry.resolve_instance('alt a')
+        self.assertIs(self.instance, self.registry.resolve_instance(INSTANCE_A))
+
+    def test_unknown_instance_is_distinct_from_registered_but_offline(self):
+        with self.assertRaisesRegex(ValueError, 'Unknown instance'):
+            self.registry.resolve_instance('not registered')
+        with self.assertRaisesRegex(ValueError, 'Unknown instance'):
+            self.registry.command(OWNER, 'not registered', CONTEXT_A, 'test')
+        with self.assertRaisesRegex(ValueError, 'offline'):
+            self.registry.command(OWNER, INSTANCE_B, CONTEXT_A, 'test')
+
     def test_duplicate_clicks_deliver_one_idempotent_command_until_ack(self):
         first = self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'login')
         self.assertEqual(first, self.registry.command(OWNER, INSTANCE_A, CONTEXT_A, 'login'))

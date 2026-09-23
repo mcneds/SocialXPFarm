@@ -83,6 +83,18 @@ class Registry:
     def online(self, instance):
         return instance.snapshot is not None and self.clock() - instance.seen < 45
 
+    def resolve_instance(self, value):
+        key = value.strip()
+        instance = self.instances.get(key.lower())
+        if instance is not None:
+            return instance
+        matches = [i for i in self.instances.values() if i.label.casefold() == key.casefold()]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            raise ValueError('Multiple instances have that label. Select an autocomplete entry or copy its ID from /sxp status.')
+        raise ValueError('Unknown instance. Select an autocomplete entry, type its exact label, or copy its ID from /sxp status.')
+
     def exchange(self, instance, body):
         if not isinstance(body, dict) or set(body) - {'runId', 'ack', 'snapshot'}:
             raise ValueError('Invalid exchange')
@@ -110,7 +122,9 @@ class Registry:
         if owner != self.owner:
             raise PermissionError('Only the configured owner may control sign-in')
         instance = self.instances.get(instance_id)
-        if not instance or not self.online(instance):
+        if instance is None:
+            raise ValueError('Unknown instance. Select an autocomplete entry or copy its ID from /sxp status.')
+        if not self.online(instance):
             raise ValueError('Instance is offline; check its PC')
         snapshot = instance.snapshot
         if action == 'test' and not snapshot.get('canTest', False):

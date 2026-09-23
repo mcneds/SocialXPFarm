@@ -150,7 +150,7 @@ class Bot(discord.Client):
         async def complete(interaction, current):
             if not authorized(registry, interaction):
                 return []
-            return [app_commands.Choice(name=i.label, value=i.id) for i in registry.instances.values()
+            return [app_commands.Choice(name=f'{i.label} ({i.id[:8]})', value=i.id) for i in registry.instances.values()
                     if current.lower() in i.label.lower()][:25]
 
         login.autocomplete('instance')(complete)
@@ -173,9 +173,16 @@ class Bot(discord.Client):
             await asyncio.sleep(2)
 
     async def named_action(self, interaction, instance_id, action):
-        instance = self.registry.instances.get(instance_id)
-        context = (instance.snapshot or {}).get('context', '') if instance else ''
-        await self.action(interaction, instance_id, context, action)
+        if not authorized(self.registry, interaction):
+            await self.action(interaction, instance_id, '', action)
+            return
+        try:
+            instance = self.registry.resolve_instance(instance_id)
+        except ValueError as error:
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        context = (instance.snapshot or {}).get('context', '')
+        await self.action(interaction, instance.id, context, action)
 
     async def action(self, interaction, instance_id, context, action):
         if not authorized(self.registry, interaction):

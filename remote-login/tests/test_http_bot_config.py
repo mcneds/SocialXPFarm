@@ -122,6 +122,30 @@ class DiscordAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('reconnecting', text)
         self.assertTrue(all(button.disabled for button in view.children))
 
+    async def test_typed_label_routes_test_to_the_online_instance(self):
+        self.registry.instances[INSTANCE_A].label = 'main'
+        publish(self.registry, value=snapshot('idle', canTest=True))
+        interaction = self.interaction()
+        await self.bot.named_action(interaction, ' MAIN ', 'test')
+        self.assertEqual('test', self.registry.instances[INSTANCE_A].command['action'])
+        self.assertIsNone(self.registry.instances[INSTANCE_B].command)
+        self.assertNotIn('offline', interaction.followup.send.call_args.args[0])
+
+    async def test_unknown_and_duplicate_labels_do_not_queue_or_claim_offline(self):
+        self.registry.instances[INSTANCE_B].label = 'Alt A'
+        for name, expected in [('Alt A', 'Multiple instances'), ('no such instance', 'Unknown instance')]:
+            interaction = self.interaction()
+            await self.bot.named_action(interaction, name, 'test')
+            self.assertIn(expected, interaction.response.send_message.call_args.args[0])
+            self.assertNotIn('offline', interaction.response.send_message.call_args.args[0])
+            self.assertIsNone(self.registry.instances[INSTANCE_A].command)
+
+    async def test_unauthorized_typed_labels_do_not_disclose_lookup_results(self):
+        interaction = self.interaction(OWNER+1)
+        await self.bot.named_action(interaction, 'no such instance', 'test')
+        self.assertIn('configured owner', interaction.response.send_message.call_args.args[0])
+        self.assertNotIn('Unknown instance', interaction.response.send_message.call_args.args[0])
+
     async def test_views_fit_discord_limits_and_disable_invalid_actions(self):
         view = Controls(self.bot, INSTANCE_A, CONTEXT_A, login=False, cancel=True)
         self.assertTrue(view.is_persistent())
